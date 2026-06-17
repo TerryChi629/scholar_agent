@@ -82,6 +82,7 @@ class Blackboard:
     critic_feedback: list[dict] = field(default_factory=list)
     status: str = Status.PLANNING.value
     artifacts: list[str] = field(default_factory=list)
+    usage: dict = field(default_factory=dict)  # M4: token/耗时累计 {prompt_tokens, completion_tokens, total_tokens, llm_ms}
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -108,6 +109,7 @@ class Blackboard:
         bb.critic_feedback = data.get("critic_feedback", [])
         bb.status = data.get("status", Status.PLANNING.value)
         bb.artifacts = data.get("artifacts", [])
+        bb.usage = data.get("usage", {})
         bb.created_at = data.get("created_at", time.time())
         bb.updated_at = data.get("updated_at", time.time())
         return bb

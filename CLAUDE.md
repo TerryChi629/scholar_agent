@@ -96,20 +96,20 @@ L1 底座层   tools/ + skills/ + rag/ + mcp_clients/ + memory/
 
 > 背景：本项目定位为**后端主导型 AI Agent 服务**。AI/RAG 是业务能力，**后端工程（稳定性、高可用、可迭代、可观测）才是核心壁垒**。本里程碑专门补齐生产级工程能力，四个关键词贯穿始终：**稳定性、高可用、可观测、成本可控**。这些功能大多在现有脚手架已留接口，补齐即可，**不得打破第 2 节分层、不得引入重型框架**。
 
-- [ ] **稳定性 — API 重试退避 + 限流**（`core/llm.py::LLM.chat` / `APIEmbedder.embed`）
+- [x] **稳定性 — API 重试退避 + 限流**（`core/llm.py::LLM.chat` / `APIEmbedder.embed`）
   - chat 与 embed 包一层指数退避重试（如 1s/2s/4s，最多 3 次），专门捕获 `429`（限流）与 `5xx`（服务端错误），其余错误分类后直接抛出。
   - 客户端侧加轻量限流（令牌桶或最小请求间隔），避免突发打爆厂商配额。
-- [ ] **高可用 — 主备模型降级**（`core/llm.py` + `config.py`）
+- [x] **高可用 — 主备模型降级**（`core/llm.py` + `config.py`）
   - 主模型连续失败/超时后，自动降级到兜底模型（如 GLM-flash 这类更便宜稳定的型号），降级动作记入 trace。
   - 降级为**可配置**：在 `config.py` 暴露 `fallback_chat_model`，禁止硬编码。
-- [ ] **成本 — Embedding / 检索缓存**（`core/llm.py::APIEmbedder` + `rag/store.py`）
+- [x] **成本 — Embedding / 检索缓存**（`core/llm.py::APIEmbedder` + `rag/store.py`）
   - Embedding 缓存：对相同文本（按内容 hash）命中本地缓存（SQLite/磁盘），不重复调 API。
   - 检索结果缓存：相同 query + 参数在 TTL 内复用上次结果。
   - 已读论文卡片复用：相同 `paper_id` 已生成的 `PaperCard` 优先复用，避免重复 Reader 调用。
-- [ ] **可观测 — 结构化日志 + 耗时/token 埋点**（`core/harness.py` + `core/agent_loop.py` trace）
+- [x] **可观测 — 结构化日志 + 耗时/token 埋点**（`core/harness.py` + `core/agent_loop.py` trace）
   - 统一结构化日志（JSON 行），每条带 `task_id / agent / step / 耗时ms / token用量 / 是否重试或降级`。
   - 每个 think/act/observe 步骤记录耗时与 token，汇总到黑板 trace，便于链路追踪与问题排查。
-- [ ] **接口 — 把 FastAPI 做实**（`interfaces/api.py`）
+- [x] **接口 — 把 FastAPI 做实**（`interfaces/api.py`）
   - 任务异步化已有骨架（立即返回 `task_id`）；补：错误态/进度态返回、`/tasks` 列表分页、健康检查 `/healthz`。
   - 保持「不在沙箱起常驻服务」红线，仅作本地手动调试与接口契约。
 

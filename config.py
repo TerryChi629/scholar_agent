@@ -32,6 +32,22 @@ class Settings:
     glm_base_url: str = field(default_factory=lambda: _get("GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4"))
     glm_chat_model: str = field(default_factory=lambda: _get("GLM_CHAT_MODEL", "glm-4-flash"))
 
+    # —— M4 高可用: 主备模型降级 (主模型连续失败时降级到更稳的兜底模型) ——
+    fallback_chat_model: str = field(default_factory=lambda: _get("FALLBACK_CHAT_MODEL", "glm-4-flash"))
+
+    # —— M4 稳定性: API 重试退避 + 客户端限流 ——
+    llm_max_retries: int = field(default_factory=lambda: int(_get("LLM_MAX_RETRIES", "3")))
+    llm_backoff_base: float = field(default_factory=lambda: float(_get("LLM_BACKOFF_BASE", "1.0")))
+    llm_min_interval: float = field(default_factory=lambda: float(_get("LLM_MIN_INTERVAL", "0.0")))
+
+    # —— M4 成本: 缓存开关与 TTL ——
+    cache_enabled: bool = field(default_factory=lambda: _get("CACHE_ENABLED", "1") not in ("0", "false", "False"))
+    retrieval_cache_ttl: int = field(default_factory=lambda: int(_get("RETRIEVAL_CACHE_TTL", "600")))
+
+    # —— M4 可观测: 结构化日志 ——
+    log_level: str = field(default_factory=lambda: _get("LOG_LEVEL", "INFO"))
+    log_to_file: bool = field(default_factory=lambda: _get("LOG_TO_FILE", "1") not in ("0", "false", "False"))
+
     # —— Embedding ——
     embed_provider: str = field(default_factory=lambda: _get("EMBED_PROVIDER", "glm"))
     embed_model: str = field(default_factory=lambda: _get("EMBED_MODEL", "embedding-3"))

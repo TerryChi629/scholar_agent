@@ -11,13 +11,20 @@ rerank (cross-encoder) 留待后续, 不在 M1 范围。
 from __future__ import annotations
 
 import re
+import threading
+import time
 
+from config import settings
 from rag.store import Chunk, get_store
 
 # RRF 平滑常数 (经验值 60): 越大则高位次的优势越平缓。
 _RRF_K = 60
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
+
+# —— M4 检索结果 TTL 缓存 (进程内, 线程安全): 相同查询短期内直接复用 ——
+_cache_lock = threading.Lock()
+_retrieval_cache: dict[tuple, tuple[float, list[Chunk]]] = {}
 
 
 def _tokenize(text: str) -> list[str]:
@@ -59,7 +66,27 @@ def hybrid_search(
     """混合检索: 向量召回 + BM25 召回, RRF 融合后返回 top_k。
 
     paper_id 不为空时, 只在该论文范围内检索 (供 Reader 精读单篇, 防跨篇串味)。
+    相同查询参数在 TTL 内命中进程内缓存, 省 embedding + 检索开销。
     """
+    cache_key = (query, top_k, year_min, paper_id)
+    if settings.cache_enabled:
+        ttl = settings.retrieval_cache_ttl
+        with _cache_lock:
+            hit = _retrieval_cache.get(cache_key)
+            if hit and (time.time() - hit[0]) < ttl:
+                return hit[1]
+
+    result = _hybrid_search_uncached(query, top_k, year_min, paper_id)
+
+    if settings.cache_enabled:
+        with _cache_lock:
+            _retrieval_cache[cache_key] = (time.time(), result)
+    return result
+
+
+def _hybrid_search_uncached(
+    query: str, top_k: int, year_min: int | None, paper_id: str | None
+) -> list[Chunk]:
     conds: list[dict] = []
     if year_min is not None:
         conds.append({"year": {"$gte": year_min}})

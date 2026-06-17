@@ -26,14 +26,24 @@ class ReaderAgent(BaseAgent):
     tools = ["rag_query"]
 
     def run_for(self, bb: Blackboard, paper_id: str, on_step=None):
-        """对单篇论文运行精读。"""
+        """对单篇论文运行精读。
+
+        已有同 paper_id 的非空卡片时直接复用 (省一次完整 agent loop), 防重复精读。
+        """
+        existing = bb.cards.get(paper_id)
+        if existing and existing.core_claim:
+            from core.obs import log_event
+            log_event("reader.card_reuse", agent="reader", paper_id=paper_id)
+            return None
         prompt = (
             f"研究方向: {bb.topic}\n目标论文 paper_id: {paper_id}\n"
             f"请精读并输出 PaperCard JSON。调用 rag_query 时务必带上 "
             f"paper_id=\"{paper_id}\" 以锁定本篇。"
         )
         from core.agent_loop import run_loop
-        result = run_loop(self.system_prompt, prompt, self.tools, on_step=on_step)
+        result = run_loop(self.system_prompt, prompt, self.tools, on_step=on_step, agent=self.name)
+        from agents.base import accumulate_usage
+        accumulate_usage(bb, result)
         self._parse_card(bb, paper_id, result.final_text)
         return result
 

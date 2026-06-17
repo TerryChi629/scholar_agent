@@ -26,13 +26,24 @@ class BaseAgent:
             user_prompt=self.build_user_prompt(bb),
             tool_names=self.tools,
             on_step=on_step,
+            agent=self.name,
         )
+        accumulate_usage(bb, result)
         self.apply_result(bb, result)
         return result
 
     def apply_result(self, bb: Blackboard, result: LoopResult) -> None:
         """把 loop 结果写回黑板。子类覆盖 (解析 JSON 等)。"""
         pass
+
+
+def accumulate_usage(bb: Blackboard, result: LoopResult) -> None:
+    """把单次 loop 的 token/耗时累计进黑板 (供任务级链路汇总)。线程安全场景下
+    各 Reader 累加同一 dict, 受 GIL 保护的 += 对 int/float 足够。"""
+    if not result or not result.usage:
+        return
+    for k, v in result.usage.items():
+        bb.usage[k] = round(bb.usage.get(k, 0) + v, 1)
 
 
 def load_skill(skill_name: str) -> str:

@@ -156,6 +156,24 @@
 > ✅ **M3 里程碑达成**：上下文压缩（防爆 token）+ 立场图谱可交互可视化 + 飞书完成推送 + MCP 协议化接入，全部真实验证。
 > 说明：MCP 因企业网络 SSL 限制改为自建 Python server，规避了对 node/外网的依赖，落地更稳。
 
+### 阶段 11：M4 —— 后端工程化（稳定性 / 高可用 / 可观测 / 成本）
+
+> 本里程碑专门补齐**生产级后端工程能力**，对齐「后端主导型 AI Agent 服务」定位。全部基于现有脚手架补齐，不打破五层分层、不引入重型框架。
+
+- 🤖 **配置出口先行**（`config.py` + `.env.example`）：新增 M4 配置项并给默认值，全部走 `settings`、零硬编码——`FALLBACK_CHAT_MODEL`（兜底模型）、`LLM_MAX_RETRIES` / `LLM_BACKOFF_BASE` / `LLM_MIN_INTERVAL`（重试退避+限流）、`CACHE_ENABLED` / `RETRIEVAL_CACHE_TTL`（缓存）、`LOG_LEVEL` / `LOG_TO_FILE`（日志）
+- 🤖 **结构化可观测底座**（`core/obs.py`，新增）：标准库 `logging` + 自定义 `_JsonFormatter`，每条日志一行 JSON（`ts/level/event` + 任意业务字段平铺）；同时输出 stderr 与可选 `storage/scholarstance.log`（文件不可写不中断主流程）；提供 `log_event()` 与计时上下文 `timed()`
+- 🤖 **稳定性 — 重试退避 + 限流**（`core/llm.py`）：`_retry_call` 对 `chat` / `embed` 做**指数退避**重试（`backoff_base * 2^n`，最多 `llm_max_retries` 次），精确分类**仅对 429 / 5xx / 超时 / 连接错误重试**，其余直接抛；`_RateLimiter`（线程安全）实现客户端**最小请求间隔**限流，间隔 ≤0 时直通
+- 🤖 **高可用 — 主备模型降级**（`core/llm.py`）：主模型重试耗尽后，若配置了不同的 `fallback_chat_model` 则**自动降级**重试一次，降级动作经 `log_event("llm.fallback")` 落结构化日志
+- 🤖 **成本 — 三级缓存**：
+  - Embedding 内容缓存（`_EmbedCache`，SQLite 持久化）：按 `model + 文本 hash` 命中，只对**未命中**的文本发起 API 请求，相同文本零重复调用；真实验证：重复 embedding 同一批文本第二次 API 调用数为 0
+  - 检索结果 TTL 缓存（`rag/retrieve.py`）：相同 `query + top_k + year_min + paper_id` 在 `retrieval_cache_ttl` 秒内复用上次结果（进程内、线程安全）
+  - 已读卡片复用（`agents/reader.py`）：同 `paper_id` 已有非空 `PaperCard` 时直接复用，跳过整轮 Reader loop
+- 🤖 **可观测 — 耗时/token 埋点**（`core/agent_loop.py` + `core/blackboard.py` + `agents/base.py`）：每轮 think 记 LLM 耗时与 `prompt/completion/total tokens`，每个 act 记工具耗时与成败；汇总 `usage` 随 `LoopResult` 返回，经 `accumulate_usage` 累计进黑板新增的 `Blackboard.usage` 字段（已同步 `from_json`），任务级链路可追溯
+- 🤖 **接口做实**（`interfaces/api.py`）：`GET /tasks` 列表分页（limit/offset）、`GET /tasks/{id}` 返回 `done`/`error`/`nodes`/`usage` 进度态、后台任务异常落盘为 `FAILED` 供查询感知、新增 `GET /healthz` 健康检查（进程存活 + 向量库可达）
+- 🤖 运行 `python main.py selfcheck` → **仍通过**；全模块 import 校验通过
+
+> ✅ **M4 里程碑达成**：LLM 调用具备重试退避 + 限流 + 主备降级；embedding/检索/卡片三级缓存显著降调用；可导出含耗时/token 的结构化链路日志；FastAPI 能异步建任务、分页查状态、健康检查。
+
 ---
 
 ## 你（👤）需要本人完成的配置
