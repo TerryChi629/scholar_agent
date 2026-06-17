@@ -13,6 +13,9 @@ storage/
 *.db
 *.log
 
+# —— 文档 ——
+docs/
+
 # —— IDE ——
 .idea/
 .vscode/

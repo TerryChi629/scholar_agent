@@ -132,34 +132,38 @@ def build_graph(topic: str) -> dict:
             edges.append(StanceEdge(source=pid, target=c["id"], relation="supports",
                                     rationale=f"{bb.cards[pid].title or pid} 属于 {c['label']} 流派"))
 
-    # 2) opposes 边: 解析每张卡片的 opposes 字段, 匹配到具体论文或流派
+    # 2) opposes 边: 解析每张卡片的 opposes 字段, 匹配到具体论文或流派。
+    #    匹配不到库内真实节点的 opposes 直接丢弃 (不再生成"一句话外部观点"噪声节点),
+    #    确保每条对立边都连接图中真实存在的论文/流派, 保持图谱干净可解读。
     title_to_id = {(card.title or "").lower(): pid for pid, card in bb.cards.items() if card.title}
     label_to_id = {n.label.lower(): n.id for n in nodes if n.type == "method_family"}
 
     for pid, card in bb.cards.items():
         for opp in card.opposes or []:
             opp_l = str(opp).lower().strip()
+            if not opp_l:
+                continue
             target = None
             for t, tid in title_to_id.items():  # 先尝试匹配论文标题
-                if opp_l and (opp_l in t or t in opp_l):
+                if tid != pid and (opp_l in t or t in opp_l):
                     target = tid
                     break
             if target is None:  # 再尝试匹配流派
                 for lab, lid in label_to_id.items():
-                    if opp_l and (opp_l in lab or lab in opp_l):
+                    if opp_l in lab or lab in opp_l:
                         target = lid
                         break
+            if target is None:  # 匹配不到库内真实节点 -> 丢弃, 不制造噪声
+                continue
             ev = _spans_to_quotes(card.evidence_spans)[:1]
+            tgt_label = next((n.label for n in nodes if n.id == target), target)
             edges.append(StanceEdge(
                 source=pid,
-                target=target or f"viewpoint::{_slug(str(opp))}",
+                target=target,
                 relation="opposes",
-                rationale=f"{card.title or pid} 在卡片中声明与「{opp}」对立",
+                rationale=f"{card.title or pid} 与「{tgt_label}」在方法路线上存在分歧",
                 evidence=ev,
             ))
-            if target is None:  # 外部观点节点 (库内无对应论文)
-                nodes.append(StanceNode(id=f"viewpoint::{_slug(str(opp))}",
-                                        label=str(opp), type="viewpoint"))
 
     # 去重节点 (viewpoint 可能重复)
     seen: set[str] = set()
@@ -187,11 +191,16 @@ def detect_gaps(topic: str) -> list:
         return []
     gaps: list[str] = []
 
-    # 1) 孤立流派 (仅一篇论文)
+    # 1) 孤立流派 (仅一篇论文): 聚合为一条, 避免每篇各自成派时刷屏。
     fam_count: Counter = Counter(c.method_family or "未分类" for c in bb.cards.values())
-    for fam, n in fam_count.items():
-        if n == 1 and fam != "未分类":
-            gaps.append(f"方法流派「{fam}」仅有单篇代表, 缺乏横向对比与复现验证。")
+    solo = [fam for fam, n in fam_count.items() if n == 1 and fam != "未分类"]
+    if len(solo) == 1:
+        gaps.append(f"方法流派「{solo[0]}」仅有单篇代表, 缺乏横向对比与复现验证。")
+    elif len(solo) > 1:
+        gaps.append(
+            f"共有 {len(solo)} 个方法流派各仅一篇代表 ({', '.join(solo)}), "
+            f"流派间缺乏横向对比与复现验证, 整体呈现「百花齐放但少交叉印证」的格局。"
+        )
 
     # 2) 高频未解决的局限
     lim_count: Counter = Counter()
