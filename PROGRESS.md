@@ -128,6 +128,18 @@
 
 > ✅ **M2 里程碑达成**：立场图谱（节点+对立边+证据）+ 综述初稿落盘 + 防幻觉 Critic 闸门 + Reader 并行，全链路真实跑通。
 
+### 阶段 9：接入 Git 版本管理
+
+- 👤 决策：仓库根放在 `scholarstance/`；PDF（`test_paper/`）与 zip 包不纳入版本管理；**不动全局 git config**（本机有其他账户）
+- 👤 本人设置**仓库级**身份（仅作用于本仓库，不影响全局）：`git config user.name TerryChi629` / `git config user.email 1125605344@qq.com`
+- 🤖 校对 `.gitignore`：确认 `.env`（含密钥）、`.venv/`、`storage/`、`*.db`、`*.log`、`__pycache__/` 均已忽略；仅保留 `.env.example` 模板入库
+- 🤖 `git init -b main` 初始化；`git add -A` 后核对暂存区，确认无任何密钥/虚拟环境/运行产物（37 个源码与文档文件）
+- 🤖 首次提交 `feat: ScholarStance M1+M2 初始版本`（root-commit `a340383`，37 files）
+- 👤 本机已配置 SSH key，遂将远程切为 SSH：`origin = git@github.com:TerryChi629/scholar_agent.git`
+- 🤖 `git push -u origin main` 推送成功，`main` 已与远程建立追踪
+
+> ✅ **代码已托管**：远程仓库 `https://github.com/TerryChi629/scholar_agent.git`，后续可正常增量提交。
+
 ---
 
 ## 你（👤）需要本人完成的配置
