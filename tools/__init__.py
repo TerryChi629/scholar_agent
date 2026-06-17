@@ -230,15 +230,128 @@ def export_md(title: str, content: str) -> str:
 
 
 @tool
-def export_graph_html(topic: str, graph_json: str) -> str:
-    """把立场图谱导出为静态 HTML (可视化)。写操作。
+def export_graph_html(topic: str) -> str:
+    """把黑板上的立场图谱渲染为可交互 HTML (vis-network)。写操作。
 
-    TODO(Trae): 用 vis-network / mermaid 渲染 graph_json。
+    确定性可视化: 直接读黑板 bb.graph (build_graph 已写回的真实结果), 不让 LLM
+    生成图结构。节点按类型着色 (流派/论文/外部观点), 边按关系着色 (opposes 红/
+    supports 绿), 悬停显示 rationale 与证据。落盘后登记到 bb.artifacts。
     """
+    import html
+    import json
     from pathlib import Path
     from config import settings
+    from core.run_context import get_active_blackboard
+
+    bb = get_active_blackboard()
+    graph = getattr(bb, "graph", None) if bb is not None else None
+    if graph is None or not graph.nodes:
+        return "[无图谱可导出: 请先 build_graph]"
+
+    color_by_type = {"method_family": "#4C9AFF", "paper": "#79F2C0",
+                     "viewpoint": "#FFAB00"}
+    shape_by_type = {"method_family": "diamond", "paper": "dot", "viewpoint": "triangle"}
+    nodes = []
+    for n in graph.nodes:
+        title_bits = [f"类型: {n.type}"]
+        if n.members:
+            mem = ", ".join((bb.cards[m].title or m) if (bb and m in bb.cards) else m
+                            for m in n.members)
+            title_bits.append(f"成员: {mem}")
+        nodes.append({
+            "id": n.id, "label": n.label,
+            "color": color_by_type.get(n.type, "#C1C7D0"),
+            "shape": shape_by_type.get(n.type, "dot"),
+            "title": " | ".join(title_bits),
+        })
+
+    edge_color = {"opposes": "#FF5630", "supports": "#36B37E",
+                  "extends": "#6554C0", "evolves_to": "#00B8D9"}
+    edges = []
+    for e in graph.edges:
+        tip = e.rationale or e.relation
+        if e.evidence:
+            tip += "\n证据: " + " / ".join(str(x) for x in e.evidence[:2])
+        edges.append({
+            "from": e.source, "to": e.target, "label": e.relation,
+            "arrows": "to", "color": {"color": edge_color.get(e.relation, "#8993A4")},
+            "title": tip, "font": {"size": 10, "align": "middle"},
+        })
+
+    gaps_html = "".join(f"<li>{html.escape(str(g))}</li>" for g in (graph.gaps or []))
+    page = """<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8"/>
+<title>立场图谱 · __TOPIC__</title>
+<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+<style>
+  body{margin:0;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;background:#0d1117;color:#c9d1d9}
+  header{padding:12px 20px;border-bottom:1px solid #21262d}
+  h1{font-size:18px;margin:0}
+  #net{width:100%;height:72vh;border-bottom:1px solid #21262d}
+  .legend{font-size:12px;color:#8b949e;padding:8px 20px}
+  .legend span{margin-right:16px}
+  .gaps{padding:8px 20px}
+  .gaps h2{font-size:14px}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:middle}
+</style></head>
+<body>
+<header><h1>立场图谱 · __TOPIC__</h1></header>
+<div class="legend">
+  <span><i class="dot" style="background:#4C9AFF"></i>方法流派</span>
+  <span><i class="dot" style="background:#79F2C0"></i>论文</span>
+  <span><i class="dot" style="background:#FFAB00"></i>外部观点</span>
+  <span style="color:#FF5630">— opposes</span>
+  <span style="color:#36B37E">— supports</span>
+</div>
+<div id="net"></div>
+<div class="gaps"><h2>研究空白</h2><ul>__GAPS__</ul></div>
+<script>
+  const nodes=new vis.DataSet(__NODES__);
+  const edges=new vis.DataSet(__EDGES__);
+  new vis.Network(document.getElementById('net'),{nodes,edges},{
+    nodes:{font:{color:'#c9d1d9'}},
+    physics:{stabilization:true,barnesHut:{springLength:160}},
+    interaction:{hover:true,tooltipDelay:120}
+  });
+</script>
+</body></html>"""
+    page = (page.replace("__TOPIC__", html.escape(topic or graph.topic or ""))
+                .replace("__NODES__", json.dumps(nodes, ensure_ascii=False))
+                .replace("__EDGES__", json.dumps(edges, ensure_ascii=False))
+                .replace("__GAPS__", gaps_html or "<li>（未识别）</li>"))
 
     settings.ensure_dirs()
-    path = settings.storage_dir / f"{topic}_graph.html"
-    Path(path).write_text(f"<!-- TODO 可视化 -->\n<pre>{graph_json}</pre>", encoding="utf-8")
+    path = settings.storage_dir / f"{_slug(topic or graph.topic)}_graph.html"
+    Path(path).write_text(page, encoding="utf-8")
+    if bb is not None and str(path) not in bb.artifacts:
+        bb.artifacts.append(str(path))
     return str(path)
+
+
+@tool
+def fs_list_dir(root_dir: str, sub_path: str = ".") -> list:
+    """通过 MCP filesystem server 列出目录内容 (协议化能力接入示例)。
+
+    经官方 @modelcontextprotocol/server-filesystem 访问, root_dir 为授权根目录,
+    sub_path 为其下相对/绝对子路径。需本机已安装 node/npx。
+    """
+    from mcp_clients import mcp_list_dir
+
+    try:
+        return mcp_list_dir(root_dir, sub_path)
+    except Exception as exc:  # noqa: BLE001
+        return [f"[mcp error] {exc}"]
+
+
+@tool
+def fs_read_file(root_dir: str, file_path: str) -> str:
+    """通过 MCP filesystem server 读取文本文件内容 (协议化能力接入示例)。
+
+    经官方 filesystem-mcp 在授权 root_dir 内读取 file_path。需本机已安装 node/npx。
+    """
+    from mcp_clients import mcp_read_file
+
+    try:
+        return mcp_read_file(root_dir, file_path)
+    except Exception as exc:  # noqa: BLE001
+        return f"[mcp error] {exc}"

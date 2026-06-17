@@ -37,7 +37,7 @@ class SynthesizerAgent(BaseAgent):
 
     def apply_result(self, bb, result) -> None:
         """兜底: 确保图谱已建、综述已落盘且内容有效 (LLM 可能漏调工具或写占位内容)。"""
-        from tools import build_graph, export_md
+        from tools import build_graph, export_md, export_graph_html
 
         # 1) 图谱兜底: LLM 没成功建图就确定性补建
         if bb.graph is None or not bb.graph.nodes:
@@ -51,6 +51,9 @@ class SynthesizerAgent(BaseAgent):
         if not self._looks_valid(best):
             best = self._fallback_review(bb)
         export_md(f"review_{bb.topic}", best)  # 始终落盘一份有效综述 (覆盖占位产物)
+
+        # 3) 可视化兜底: 始终从黑板图谱导出可交互 HTML
+        export_graph_html(bb.topic)
 
     @staticmethod
     def _existing_md_text(bb: Blackboard) -> str:

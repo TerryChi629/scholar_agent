@@ -69,15 +69,117 @@ def persist_if_large(content: str, tag: str, threshold: int = 4000) -> str:
     return f"[大输出已落盘: {path}]\n摘要(前500字):\n{content[:500]}"
 
 
-# ============ 上下文压缩 ============
+# ============ 上下文压缩 + token 计数 ============
 
-def compress_context(messages: list[dict]) -> list[dict]:
-    """超出 token 预算时压缩历史。
+def estimate_tokens(text: str) -> int:
+    """粗略估算 token 数 (不依赖 tiktoken, GLM/DeepSeek 无官方分词器)。
 
-    TODO(Trae): 1) 估算 token; 2) 旧轮次摘要化; 3) 保留 system + 最近 N 轮。
+    经验近似: CJK 字符约 1 token/字, 其余 (英文/符号) 约 1 token/4 字符。
+    宁可高估 (偏保守), 触发压缩比超限安全。
     """
-    # 占位: 暂不压缩
-    return messages
+    if not text:
+        return 0
+    cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
+    other = len(text) - cjk
+    return cjk + (other + 3) // 4
+
+
+def _message_tokens(msg: dict) -> int:
+    """单条消息的 token 估算 (含 content + tool_calls 序列化 + 角色固定开销)。"""
+    import json as _json
+
+    n = 4  # 每条消息的角色/分隔固定开销
+    n += estimate_tokens(str(msg.get("content") or ""))
+    for tc in msg.get("tool_calls") or []:
+        try:
+            n += estimate_tokens(_json.dumps(tc, ensure_ascii=False, default=str))
+        except (TypeError, ValueError):
+            n += estimate_tokens(str(tc))
+    return n
+
+
+def count_messages_tokens(messages: list[dict]) -> int:
+    """整个消息列表的 token 估算。"""
+    return sum(_message_tokens(m) for m in messages)
+
+
+def _is_safe_boundary(msg: dict) -> bool:
+    """该消息可作为"保留块"的起点而不破坏 tool_call 配对。
+
+    不能从 role=tool (其对应的 assistant.tool_calls 可能已被裁掉) 或
+    携带 tool_calls 的 assistant 中途切入, 否则厂商接口会报配对错误。
+    """
+    role = msg.get("role")
+    if role in ("user", "system"):
+        return True
+    if role == "assistant" and not msg.get("tool_calls"):
+        return True
+    return False
+
+
+def _summarize_dropped(messages: list[dict]) -> str:
+    """把被裁掉的旧消息确定性地摘要化 (不调 LLM: 省成本、可复现、防幻觉)。
+
+    保留角色与关键内容片段, 工具调用只留名字与结果概要。
+    """
+    lines: list[str] = []
+    for m in messages:
+        role = m.get("role")
+        content = str(m.get("content") or "").strip().replace("\n", " ")
+        if role == "assistant" and m.get("tool_calls"):
+            names = ", ".join(tc.get("function", {}).get("name", "?")
+                              for tc in m["tool_calls"])
+            lines.append(f"- assistant 调用工具: {names}")
+            if content:
+                lines.append(f"  想法: {content[:120]}")
+        elif role == "tool":
+            lines.append(f"- 工具返回: {content[:160]}")
+        elif role == "user":
+            lines.append(f"- 用户/输入: {content[:160]}")
+        elif role == "assistant":
+            lines.append(f"- assistant: {content[:200]}")
+    return "\n".join(lines)
+
+
+def compress_context(messages: list[dict], budget: int | None = None) -> list[dict]:
+    """超出 token 预算时压缩历史, 保证 tool_call 配对完整。
+
+    策略: 1) 估算总 token; 2) 未超预算原样返回; 3) 超出则保留 system, 从尾部
+    保留最近若干轮 (在安全边界切入), 其余旧消息确定性摘要为一条历史摘要消息。
+    """
+    budget = budget or settings.context_token_budget
+    if count_messages_tokens(messages) <= budget:
+        return messages
+    if not messages:
+        return messages
+
+    system = messages[0] if messages[0].get("role") == "system" else None
+    body = messages[1:] if system else messages
+
+    # 给 system + 摘要 + 后续生成预留余量, 用预算的一半装最近消息
+    keep_budget = max(1, budget // 2)
+    acc = 0
+    start = len(body)
+    for i in range(len(body) - 1, -1, -1):
+        acc += _message_tokens(body[i])
+        if acc > keep_budget:
+            break
+        start = i
+    # 向后推进到安全边界, 避免从悬空的 tool / tool_calls 中途切入
+    while start < len(body) and not _is_safe_boundary(body[start]):
+        start += 1
+
+    dropped, kept = body[:start], body[start:]
+    out: list[dict] = []
+    if system:
+        out.append(system)
+    if dropped:
+        out.append({
+            "role": "user",
+            "content": "[历史摘要 — 早期轮次已压缩]\n" + _summarize_dropped(dropped),
+        })
+    out.extend(kept)
+    return out
 
 
 # ============ 危险操作确认 ============

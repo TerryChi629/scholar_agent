@@ -12,6 +12,7 @@ from typing import Callable
 from rich.console import Console
 
 from config import settings
+from core.harness import compress_context
 from core.llm import get_llm
 from core.tool_registry import registry
 
@@ -52,6 +53,7 @@ def run_loop(
     trace: list[dict] = []
 
     for rnd in range(1, max_rounds + 1):
+        messages = compress_context(messages)  # 长对话防爆 token: 超预算则摘要化旧轮次
         resp = llm.chat(messages, tools=tools)
         msg = resp.choices[0].message
 

@@ -87,10 +87,10 @@ L1 底座层   tools/ + skills/ + rag/ + mcp_clients/ + memory/
 - [x] `agents/orchestrator.py`：Reader 并行（`settings.reader_concurrency`）+ Critic 反馈重调度。
 
 ### M3（工程化 + 集成）
-- [ ] `core/harness.py`：上下文压缩 `compress_context`、token 计数。
-- [ ] `mcp_clients/`：接官方 filesystem-mcp，包装成 `@tool`。
-- [ ] `interfaces/feishu.py`：任务完成 Webhook 推送。
-- [ ] `tools/export_graph_html`：vis-network / mermaid 可视化。
+- [x] `core/harness.py`：上下文压缩 `compress_context`、token 计数。
+- [x] `mcp_clients/`：自建 Python filesystem MCP server（受限网络绕开 npx），包装成 `@tool`。
+- [x] `interfaces/feishu.py`：任务完成 Webhook 推送。
+- [x] `tools/export_graph_html`：vis-network 可视化。
 
 ### M4（后端工程化：稳定性 / 高可用 / 可观测 / 成本）
 

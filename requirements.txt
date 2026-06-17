@@ -13,8 +13,8 @@ rank-bm25>=0.2.2        # BM25 关键词召回 (hybrid 检索)
 fastapi>=0.111.0        # 预留 HTTP 接口
 uvicorn>=0.30.0         # ASGI server (仅本地调试用)
 
-# --- 可选: MCP ---
-# mcp>=1.0.0            # 官方 MCP SDK, M3 阶段接入时再解开
+# --- MCP ---
+mcp>=1.0.0             # 官方 MCP SDK (client), 接 filesystem-mcp; 需本机 node/npx
 
 # --- Dev ---
 pytest>=8.0.0

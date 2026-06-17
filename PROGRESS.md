@@ -140,6 +140,22 @@
 
 > ✅ **代码已托管**：远程仓库 `https://github.com/TerryChi629/scholar_agent.git`，后续可正常增量提交。
 
+### 阶段 10：M3 —— 工程化 + 集成
+
+- 🤖 **上下文压缩 + token 计数**（`core/harness.py`）：实现 `estimate_tokens`（CJK 1 token/字、其余 1 token/4 字符的保守估算，不依赖 tiktoken）、`compress_context`（超 `context_token_budget` 时保留 system + 最近若干轮，旧轮次**确定性摘要**为一条历史消息）。关键：压缩时严守 **tool_call 配对**，绝不从悬空的 `tool` / 带 `tool_calls` 的 assistant 中途切入。接入 `core/agent_loop.py` 每轮 LLM 调用前，长对话防爆 token
+- 🤖 **立场图谱可视化**（`tools/export_graph_html`）：重写为 **vis-network** 渲染——节点按类型着色（流派/论文/外部观点），边按关系着色（opposes 红 / supports 绿），悬停显示 rationale 与证据，附研究空白清单。**确定性可视化**：直接读黑板 `bb.graph`（`build_graph` 已写回的真实结果），不让 LLM 生成图结构。在 `synthesizer.apply_result` 兜底里始终导出 HTML
+- 🤖 **飞书 Webhook 推送**（`interfaces/feishu.py` + `orchestrator`）：任务完成后在 `Orchestrator.run` 调用 `notify_task_done`，推送方向 + 产物路径；未配置 `FEISHU_WEBHOOK_URL` 时静默跳过，通知失败不中断主流程
+- 🤖 **MCP filesystem 接入**（`mcp_clients/`）：
+  - 👤 本机无 node → 选「先装 node 再接官方 server」；🤖 用 brew 装 node 26.3.0、pip 装官方 `mcp` SDK（1.28.0）
+  - ⚠️ 真实联调发现：企业网络对 HTTPS 做 SSL 拦截（自签 CA），`npx` 无法验证证书拉取官方 `@modelcontextprotocol/server-filesystem`（`UNABLE_TO_GET_ISSUER_CERT_LOCALLY`）
+  - 🤖 改用**自建 Python MCP server**（`mcp_clients/fs_server.py`，基于官方 `mcp` SDK 的 FastMCP）：实现标准 MCP 协议，client 以 stdio 子进程拉起，**不依赖 node/网络**，同样证明「协议化能力接入」。暴露 `list_directory` / `read_text_file`，并做**目录穿越防护**（路径收敛到授权根目录）
+  - 🤖 包装成 `@tool`：`fs_list_dir` / `fs_read_file`，与本地工具同构，对 Agent 透明
+  - 🤖 真实跑通：`list_tools` 握手成功、读文件正确、越权路径被安全拒绝
+- 🤖 运行 `python main.py selfcheck` → **仍通过**（已注册 tools 由 9 增至 11）
+
+> ✅ **M3 里程碑达成**：上下文压缩（防爆 token）+ 立场图谱可交互可视化 + 飞书完成推送 + MCP 协议化接入，全部真实验证。
+> 说明：MCP 因企业网络 SSL 限制改为自建 Python server，规避了对 node/外网的依赖，落地更稳。
+
 ---
 
 ## 你（👤）需要本人完成的配置

@@ -60,9 +60,19 @@ class Orchestrator:
 
             bb.status = Status.DONE.value
             save_checkpoint(bb)
+            self._notify_done(bb)
             return bb
         finally:
             set_active_blackboard(None)
+
+    @staticmethod
+    def _notify_done(bb: Blackboard) -> None:
+        """任务完成后推送飞书 (未配置 webhook 时静默跳过, 不影响主流程)。"""
+        from interfaces.feishu import notify_task_done
+        try:
+            notify_task_done(bb.topic, bb.artifacts)
+        except Exception:  # noqa: BLE001  通知失败不应中断任务
+            pass
 
     def _read_parallel(self, bb: Blackboard, paper_ids: list[str]) -> None:
         """并行精读多篇论文。Reader 各自只调 rag_query, 互不共享状态, 线程安全。
