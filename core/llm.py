@@ -76,20 +76,37 @@ def _retry_call(fn, *, op: str, model: str | None = None):
 
 
 class LLM:
-    """对话模型网关 (重试退避 + 限流 + 主备降级)。"""
+    """对话模型网关 (重试退避 + 限流 + 主备降级 + 多模型 client 池)。
+
+    M7: 支持按 (provider, model) 分发。chat() 不指定 provider/model 时走默认单模型
+    (向后兼容); 指定时从 client 池取对应厂商 client, 实现 Agent 级混合模型分发。
+    """
 
     def __init__(self) -> None:
-        api_key, base_url = settings.chat_credentials()
-        self._client = OpenAI(api_key=api_key, base_url=base_url)
+        self._provider = settings.llm_provider
         self._model = settings.chat_model()
         self._fallback = settings.fallback_chat_model
         self._limiter = _RateLimiter(settings.llm_min_interval)
+        # provider -> OpenAI client 池 (同厂复用一个 client, 跨厂各持一个)
+        self._clients: dict[str, OpenAI] = {}
+        key, base_url = settings.chat_credentials()
+        self._clients[self._provider] = OpenAI(api_key=key, base_url=base_url)
 
-    def _create(self, model: str, params: dict[str, Any]):
+    def _client_for(self, provider: str) -> OpenAI:
+        """取/建指定 provider 的 client (懒加载, 进程内缓存)。"""
+        client = self._clients.get(provider)
+        if client is None:
+            key, base_url = settings.credentials_for(provider)
+            client = OpenAI(api_key=key, base_url=base_url)
+            self._clients[provider] = client
+        return client
+
+    def _create(self, provider: str, model: str, params: dict[str, Any]):
         self._limiter.acquire()
         call_params = dict(params, model=model)
+        client = self._client_for(provider)
         return _retry_call(
-            lambda: self._client.chat.completions.create(**call_params),
+            lambda: client.chat.completions.create(**call_params),
             op="chat", model=model,
         )
 
@@ -98,11 +115,15 @@ class LLM:
         messages: list[dict[str, str]],
         tools: list[dict] | None = None,
         temperature: float = 0.3,
+        provider: str | None = None,
+        model: str | None = None,
         **kwargs: Any,
     ):
         """单轮对话。返回原始 response, 由调用方解析 (含 tool_calls)。
 
-        主模型重试耗尽后, 若配置了不同的兜底模型则降级重试一次。
+        provider/model 指定时按该 (厂商, 模型) 调用 (M7 分发); 否则用默认单模型。
+        默认路径: 主模型重试耗尽后, 若配置了不同兜底模型则降级重试一次。
+        分发路径 (显式指定 model): 依赖 _retry_call 退避, 不再跨模型降级 (避免跨厂 404)。
         """
         params: dict[str, Any] = {
             "messages": messages,
@@ -113,17 +134,22 @@ class LLM:
             params["tool_choice"] = "auto"
         params.update(kwargs)
 
+        # 分发路径: 显式指定模型, 直接调用 (重试退避仍生效)
+        if model is not None:
+            return self._create(provider or self._provider, model, params)
+
+        # 默认路径: 主模型 + 跨模型兜底降级 (同 provider)
         try:
-            return self._create(self._model, params)
+            return self._create(self._provider, self._model, params)
         except Exception as exc:  # noqa: BLE001
             if not self._fallback or self._fallback == self._model:
                 raise
             log_event("llm.fallback", level="WARNING", op="chat",
                       primary=self._model, fallback=self._fallback, error=str(exc))
-            return self._create(self._fallback, params)
+            return self._create(self._provider, self._fallback, params)
 
     def chat_text(self, messages: list[dict[str, str]], **kwargs: Any) -> str:
-        """便捷方法: 只取文本回复。"""
+        """便捷方法: 只取文本回复。支持透传 provider/model (M7 分发)。"""
         resp = self.chat(messages, **kwargs)
         return resp.choices[0].message.content or ""
 

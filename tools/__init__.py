@@ -383,6 +383,64 @@ def export_graph_html(topic: str) -> str:
     return str(path)
 
 
+# 综述 HTML 模板: 与立场图谱同款暗色主题, 阅读舒适。正文由 markdown 库渲染后注入。
+_REVIEW_HTML = """<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>综述 · __TITLE__</title>
+<style>
+  body{margin:0;background:#0d1117;color:#c9d1d9;
+       font-family:-apple-system,Segoe UI,Helvetica,Arial,"PingFang SC","Microsoft YaHei",sans-serif;
+       line-height:1.8;font-size:16px}
+  .wrap{max-width:860px;margin:0 auto;padding:40px 28px 80px}
+  h1{font-size:28px;border-bottom:1px solid #21262d;padding-bottom:14px;margin-top:8px}
+  h2{font-size:21px;margin-top:36px;color:#79c0ff}
+  h3{font-size:17px;margin-top:26px;color:#a5d6ff}
+  p{margin:14px 0}
+  ul,ol{padding-left:24px}
+  li{margin:6px 0}
+  strong{color:#e6edf3}
+  a{color:#58a6ff}
+  blockquote{margin:18px 0;padding:8px 16px;border-left:3px solid #30363d;
+             background:#161b22;color:#8b949e;border-radius:0 6px 6px 0}
+  code{background:#161b22;padding:2px 6px;border-radius:4px;font-size:14px}
+  hr{border:none;border-top:1px solid #21262d;margin:32px 0}
+  table{border-collapse:collapse;margin:18px 0;width:100%}
+  th,td{border:1px solid #30363d;padding:8px 12px;text-align:left}
+  th{background:#161b22}
+</style></head>
+<body><div class="wrap">
+__BODY__
+</div></body></html>"""
+
+
+@tool
+def export_review_html(title: str, content: str) -> str:
+    """把综述 markdown 正文渲染为带样式的 HTML 文件, 返回路径。写操作。
+
+    确定性渲染: 用 python-markdown 把 LLM 已产出的 markdown 转 HTML, 套暗色阅读主题
+    (与立场图谱同款), 不调用 LLM、零额外 token。落盘后登记到 bb.artifacts。
+    """
+    import markdown as md
+    from pathlib import Path
+    from config import settings
+    from core.run_context import get_active_blackboard
+
+    settings.ensure_dirs()
+    safe = _slug(title)[:80] or "review"
+    body = md.markdown(content or "", extensions=["extra", "sane_lists", "nl2br"])
+    # 取首个 # 标题作为 <title>; 无则用传入 title
+    page_title = (title or "综述").strip()
+    page = _REVIEW_HTML.replace("__TITLE__", page_title).replace("__BODY__", body)
+
+    path = settings.storage_dir / f"{safe}.html"
+    Path(path).write_text(page, encoding="utf-8")
+    bb = get_active_blackboard()
+    if bb is not None and str(path) not in bb.artifacts:
+        bb.artifacts.append(str(path))
+    return str(path)
+
+
 @tool
 def fs_list_dir(root_dir: str, sub_path: str = ".") -> list:
     """通过 MCP filesystem server 列出目录内容 (协议化能力接入示例)。

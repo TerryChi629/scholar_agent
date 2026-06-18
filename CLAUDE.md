@@ -124,6 +124,15 @@ L1 底座层   tools/ + skills/ + rag/ + mcp_clients/ + memory/
 - [x] **I evidence 为空即打回**（`agents/critic.py`）：补齐漏洞——`evidence_spans` 整体为空的卡片直接判不通过（此前空数组反而免检），守住防幻觉命脉。
 - [x] **J 模板化/雷同检测**（`agents/critic.py`）：套话词典命中 + 跨卡 `core_claim` Jaccard 相似度过高 → **仅告警 + 建议重读，不改 passed**（不击杀，避免误杀真实但简短的结论）。
 
+### M7（混合模型分发：按 Agent 难度分档，平衡成本与质量）
+
+> 背景：单模型两难——全用 deepseek-v4-pro 质量好但偏贵（一次任务约 0.64 元），全用 glm-4-flash 便宜但综述质量崩（paper_id 当正文、引用错乱）。按「任务难度」给不同 Agent 配不同档位模型，简单下沉、综述上浮。原则不变：配置走 `settings`、零硬编码，不开启分发时行为完全不变。
+
+- [x] **三档可配 + Agent 映射**（`config.py` + `.env.example`）：`MODEL_TIER_LOW/MID/HIGH`（值 `provider:model`）+ `AGENT_MODEL_RETRIEVER/READER/SYNTHESIZER/CRITIC`（值 low/mid/high）；`resolve_agent_model(agent)` 解析为 `(provider, model, key, base_url)`，**未配置时 model=None 回退默认单模型**（保留 M4 主备降级）。
+- [x] **网关多模型 client 池**（`core/llm.py`）：`_clients: dict[provider, OpenAI]` 懒加载缓存；`chat(provider, model)` 指定时走分发路径（不跨模型降级以免跨厂 404），不指定走默认路径（保留主备降级）。
+- [x] **Loop 按 Agent 透传**（`core/agent_loop.py` + `agents/reader.py`）：`run_loop` 按 `agent` 解析模型并传入，`agent.think` 日志加 `model` 字段；Reader `_extract_stance` 的轻量重抽也吃 Reader 档位（mid）。
+- 默认分档：Retriever=low(GLM) / Reader=mid(ds-flash) / Synthesizer=high(ds-pro) / Critic=low(GLM)。
+
 ---
 
 ## 7. 编码规范
@@ -153,6 +162,7 @@ L1 底座层   tools/ + skills/ + rag/ + mcp_clients/ + memory/
 - **M2 达标**：综述里每条引用都能回溯到库内真实片段（零幻觉），图谱每条边有 rationale。
 - **M3 达标**：支持 `resume <task_id>` 断点续跑；飞书能收到完成推送。
 - **M4 达标**：LLM 调用具备重试退避 + 限流 + 主备降级（断网/限流不致整体失败）；embedding/检索命中缓存可显著降调用次数；每个任务可导出含耗时/token 的结构化链路日志；FastAPI 能异步建任务、查状态、健康检查。
+- **M7 达标**：不同 Agent 按配置走不同档位模型（简单任务下沉低档省钱、综述上浮高档保质量）；未配置分发时无损回退默认单模型（保留主备降级）；日志可见每步实际所用 `model`。
 
 ---
 

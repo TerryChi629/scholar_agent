@@ -140,9 +140,11 @@ class ReaderAgent(BaseAgent):
         )
         try:
             from core.llm import get_llm
+            # M7: 这条轻量重抽也应吃 Reader 的档位 (mid), 与主体精读保持同档
+            provider, model, _, _ = settings.resolve_agent_model(self.name)
             text = get_llm().chat_text(
                 [{"role": "system", "content": sys}, {"role": "user", "content": user}],
-                temperature=0.2,
+                temperature=0.2, provider=provider, model=model,
             )
             data = self._extract_json(text)
             return {

@@ -3,6 +3,7 @@ openai>=1.30.0            # 兼容 DeepSeek / GLM 的统一 SDK
 pydantic>=2.7.0          # 数据模型 + schema 校验
 python-dotenv>=1.0.0    # 读取 .env 配置
 rich>=13.7.0            # CLI 美化 / 思考流展示
+markdown>=3.5          # 综述 markdown -> HTML 确定性渲染 (产物美化)
 
 # --- RAG ---
 chromadb>=0.5.0         # 本地向量库

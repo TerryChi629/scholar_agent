@@ -84,14 +84,19 @@ def _build_card(topic: str, artifacts: list[str], stats: dict | None) -> dict:
     ]
 
     # —— 产物按钮 (B1 可点开的 URL) ——
+    # 综述优先用美化 HTML; 若同时存在 review .md 底稿则跳过 (避免重复按钮, md 仅留作底稿)。
+    names = [os.path.basename(str(p)).lower() for p in artifacts]
+    has_review_html = any(n.endswith(".html") and not n.endswith("_graph.html") for n in names)
     buttons = []
     for path in artifacts:
         name = os.path.basename(str(path)).lower()
         if name.endswith("_graph.html"):
             label = "查看立场图谱"
         elif name.endswith(".html"):
-            label = "查看可视化"
+            label = "查看综述"
         elif name.endswith(".md"):
+            if has_review_html:  # 已有 HTML 综述, md 底稿不再出按钮
+                continue
             label = "查看综述"
         else:
             label = name

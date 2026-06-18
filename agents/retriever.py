@@ -34,7 +34,7 @@ class RetrieverAgent(BaseAgent):
         from rag.store import get_store
         from rag.retrieve import hybrid_search
 
-        max_candidates = 8
+        max_candidates = 12  # 候选上限 (覆盖当前全库规模; 超此再按相关度截断)
         valid_ids = set(get_store().list_papers().keys())
 
         # 1) 从模型最终输出 + trace 观测里抓 12 位 hex 候选 (保序)

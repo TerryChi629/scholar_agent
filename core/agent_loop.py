@@ -60,6 +60,8 @@ def run_loop(
     llm = get_llm()
     max_rounds = max_rounds or settings.max_loop_rounds
     tools = registry.openai_schemas(tool_names) if registry.list_names() else None
+    # M7: 按 agent 解析应使用的模型档位 (未配置则回退默认单模型)
+    provider, model, _, _ = settings.resolve_agent_model(agent)
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -71,14 +73,14 @@ def run_loop(
     for rnd in range(1, max_rounds + 1):
         messages = compress_context(messages)  # 长对话防爆 token: 超预算则摘要化旧轮次
         t0 = time.time()
-        resp = llm.chat(messages, tools=tools)
+        resp = llm.chat(messages, tools=tools, provider=provider, model=model)
         llm_ms = round((time.time() - t0) * 1000, 1)
         pt, ct, tt = _usage_tokens(resp)
         agg["prompt_tokens"] += pt
         agg["completion_tokens"] += ct
         agg["total_tokens"] += tt
         agg["llm_ms"] += llm_ms
-        log_event("agent.think", agent=agent, round=rnd, latency_ms=llm_ms,
+        log_event("agent.think", agent=agent, model=model, round=rnd, latency_ms=llm_ms,
                   prompt_tokens=pt, completion_tokens=ct, total_tokens=tt)
         msg = resp.choices[0].message
 

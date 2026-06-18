@@ -240,6 +240,19 @@
 
 > ✅ **飞书接入增强达成（A+B1）**：任务完成推送富信息交互卡片，按钮可点开内网托管的图谱/综述产物；双向回调（C）与云文档（B2）按定位暂缓。
 
+### 阶段 15：M7 —— 混合模型分发（按 Agent 难度分档，平衡成本与质量）
+
+> 背景：实跑发现单模型两难——全用 deepseek-v4-pro 质量好但一次任务约 0.64 元偏贵；全用 glm-4-flash 便宜但综述质量差（把 paper_id 当正文、引用错乱、立场分歧识别不出）。本阶段按「任务难度」给不同 Agent 分配不同档位模型：最简单的用 GLM，中等的用 ds-flash，最难的综述用 ds-pro，预计成本砍到原 pro 全程的 1/3~1/2。
+
+- 👤 决策：提出「最傻逼的任务用 GLM、次一点用 flash、最难用 pro」，评审分档表后「全都认可」
+- 🤖 **配置中枢**（`config.py` + `.env` + `.env.example`）：新增三档模型规格 `MODEL_TIER_LOW/MID/HIGH`（值为 `provider:model`，默认 `glm:glm-4-flash` / `deepseek:deepseek-v4-flash` / `deepseek:deepseek-v4-pro`）与 Agent→档位映射 `AGENT_MODEL_RETRIEVER/READER/SYNTHESIZER/CRITIC`（默认 low/mid/high/low）；新增 `credentials_for(provider)` 跨厂取凭证、`_tier_spec(tier)` 档位解析、`resolve_agent_model(agent)` 返回 `(provider, model, key, base_url)`。**关键**：Agent 档位留空时 `model=None`，调用方回退默认单模型（保留 M4 主备降级，不开启分发时行为完全不变）
+- 🤖 **LLM 网关支持多模型 client 池**（`core/llm.py`）：`LLM` 维护 `self._clients: dict[provider, OpenAI]`，`_client_for(provider)` 懒加载缓存（同厂复用、跨厂各持一个）；`_create(provider, model, params)` 增 provider 参数；`chat()` 新增 `provider/model` 形参——**指定 model 走分发路径**（直接调用，重试退避仍生效，但不跨模型降级以免跨厂 404），**不指定走默认路径**（保留主备降级）；`chat_text` 透传 kwargs
+- 🤖 **Loop 按 Agent 解析并透传**（`core/agent_loop.py`）：`run_loop` 内 `provider, model, _, _ = settings.resolve_agent_model(agent)`，`llm.chat(..., provider=provider, model=model)`，`agent.think` 日志加 `model` 字段。业务 Agent 零改动（`BaseAgent.run` 已传 `agent=self.name`）
+- 🤖 **Reader 轻量重抽同档**（`agents/reader.py`）：`_extract_stance` 的 `chat_text` 也按 `resolve_agent_model("reader")` 带上 mid 档位，与主体精读保持同模型（否则这条记忆命中重抽会漏到默认模型）
+- 🤖 验证：`resolve_agent_model` 冒烟——retriever→glm-4-flash、reader→deepseek-v4-flash、synthesizer→deepseek-v4-pro、critic→glm-4-flash、未配置/orchestrator→model=None（走默认）；解析全部正确
+
+> ✅ **M7 里程碑达成**：Agent 级混合模型分发落地，三档可配 + client 池跨厂复用，未配置时无损回退单模型（保留主备降级）。简单任务下沉 GLM、综述上浮 ds-pro，兼顾成本与质量。
+
 ---
 
 ## 你（👤）需要本人完成的配置

@@ -35,6 +35,17 @@ class Settings:
     # —— M4 高可用: 主备模型降级 (主模型连续失败时降级到更稳的兜底模型) ——
     fallback_chat_model: str = field(default_factory=lambda: _get("FALLBACK_CHAT_MODEL", "glm-4-flash"))
 
+    # —— M7 混合模型分发: 三档模型 (provider:model) + Agent→档位映射 ——
+    # 不同 Agent 任务难度不同, 按档位分发以平衡成本与质量 (低=GLM, 中=ds-flash, 高=ds-pro)。
+    model_tier_low: str = field(default_factory=lambda: _get("MODEL_TIER_LOW", "glm:glm-4-flash"))
+    model_tier_mid: str = field(default_factory=lambda: _get("MODEL_TIER_MID", "deepseek:deepseek-v4-flash"))
+    model_tier_high: str = field(default_factory=lambda: _get("MODEL_TIER_HIGH", "deepseek:deepseek-v4-pro"))
+    # Agent→档位 (low/mid/high); 留空则回退到 LLM_PROVIDER 默认单模型 (向后兼容)。
+    agent_model_retriever: str = field(default_factory=lambda: _get("AGENT_MODEL_RETRIEVER", ""))
+    agent_model_reader: str = field(default_factory=lambda: _get("AGENT_MODEL_READER", ""))
+    agent_model_synthesizer: str = field(default_factory=lambda: _get("AGENT_MODEL_SYNTHESIZER", ""))
+    agent_model_critic: str = field(default_factory=lambda: _get("AGENT_MODEL_CRITIC", ""))
+
     # —— M4 稳定性: API 重试退避 + 客户端限流 ——
     llm_max_retries: int = field(default_factory=lambda: int(_get("LLM_MAX_RETRIES", "3")))
     llm_backoff_base: float = field(default_factory=lambda: float(_get("LLM_BACKOFF_BASE", "1.0")))
@@ -82,6 +93,40 @@ class Settings:
         if self.llm_provider == "glm":
             return self.glm_api_key, self.glm_base_url
         return self.deepseek_api_key, self.deepseek_base_url
+
+    def credentials_for(self, provider: str) -> tuple[str, str]:
+        """按 provider 名返回 (api_key, base_url)。供混合模型分发跨厂取凭证。"""
+        if provider == "glm":
+            return self.glm_api_key, self.glm_base_url
+        return self.deepseek_api_key, self.deepseek_base_url
+
+    def _tier_spec(self, tier: str) -> str:
+        """档位别名 -> "provider:model" 规格串。"""
+        return {"low": self.model_tier_low, "mid": self.model_tier_mid,
+                "high": self.model_tier_high}.get(tier, "")
+
+    def resolve_agent_model(self, agent: str | None) -> tuple[str, str | None, str, str]:
+        """解析某 Agent 应使用的模型, 返回 (provider, model, api_key, base_url)。
+
+        映射: AGENT_MODEL_<NAME> 给出档位别名 (low/mid/high) -> MODEL_TIER_<档> 给出
+        "provider:model"。未配置该 Agent 档位时, model 返回 None, 表示走默认单模型
+        路径 (保留 M4 主备降级, 向后兼容: 不开启分发时行为完全不变)。
+        """
+        tier = {
+            "retriever": self.agent_model_retriever,
+            "reader": self.agent_model_reader,
+            "synthesizer": self.agent_model_synthesizer,
+            "critic": self.agent_model_critic,
+        }.get(agent or "", "")
+        spec = self._tier_spec(tier) if tier else ""
+        if spec and ":" in spec:
+            provider, model = spec.split(":", 1)
+            provider, model = provider.strip(), model.strip()
+            key, base_url = self.credentials_for(provider)
+            return provider, model, key, base_url
+        # 未配置分发: model=None -> 调用方走默认单模型 (含主备降级)
+        key, base_url = self.chat_credentials()
+        return self.llm_provider, None, key, base_url
 
     def ensure_dirs(self) -> None:
         self.storage_dir.mkdir(parents=True, exist_ok=True)

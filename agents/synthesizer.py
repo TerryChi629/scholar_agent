@@ -7,7 +7,9 @@ from core.blackboard import Blackboard
 
 class SynthesizerAgent(BaseAgent):
     name = "synthesizer"
-    tools = ["cluster_cards", "build_graph", "detect_gaps", "export_md", "export_graph_html"]
+    # 落盘 (export_md / export_graph_html) 不交给 LLM, 改由 apply_result 确定性执行,
+    # 避免 LLM 误调产生占位/重复产物 (历史 bug: LLM 调 export_md 写入「待撰写」)。
+    tools = ["cluster_cards", "build_graph", "detect_gaps"]
 
     @property
     def system_prompt(self) -> str:  # type: ignore[override]
@@ -16,13 +18,14 @@ class SynthesizerAgent(BaseAgent):
             "识别方法流派、观点分歧, 给每条关系写明 rationale 与 evidence, "
             "并指出研究空白。\n"
             "工作流程: 先调用 build_graph(topic) 构建图谱 (它会自动聚类、连边、找空白并写回黑板), "
-            "再依据图谱撰写章节化综述初稿, 最后调用 export_md(title, content) 落盘。\n"
+            "再依据图谱在你的最终回复中直接输出完整的章节化综述正文 (无需调用任何落盘工具, "
+            "系统会自动保存你输出的正文)。\n"
             "综述写作要求:\n"
             "- 全文用简体中文撰写, 段落连贯成文 (而非罗列字段), 章节包含: 摘要、"
             "方法范式概览、代表工作剖析、立场分歧、研究空白与展望。\n"
             "- 引用论文时使用其真实标题; 专有名词/缩写 (如 TIGER、HSTU、Semantic ID) 可保留英文。\n"
-            "- export_md 的 content 必须是完整成文的综述正文, 长度不少于 800 字, "
-            "严禁传入「待撰写」「待补充」等占位内容。\n"
+            "- 最终回复必须是完整成文的综述正文, 长度不少于 800 字, "
+            "严禁输出「待撰写」「待补充」等占位内容。\n"
             "- 必须基于卡片中的真实信息, 禁止编造不存在的结论。"
         )
         skill = load_skill("stance_graph")  # 注入 SOP
@@ -43,7 +46,7 @@ class SynthesizerAgent(BaseAgent):
 
     def apply_result(self, bb, result) -> None:
         """兜底: 确保图谱已建、综述已落盘且内容有效 (LLM 可能漏调工具或写占位内容)。"""
-        from tools import build_graph, export_md, export_graph_html
+        from tools import build_graph, export_md, export_graph_html, export_review_html
 
         # 1) 图谱兜底: LLM 没成功建图就确定性补建
         if bb.graph is None or not bb.graph.nodes:
@@ -56,7 +59,9 @@ class SynthesizerAgent(BaseAgent):
         best = max([llm_text, existing], key=len)
         if not self._looks_valid(best):
             best = self._fallback_review(bb)
-        export_md(f"review_{bb.topic}", best)  # 始终落盘一份有效综述 (覆盖占位产物)
+        # markdown 底稿 (供人工精修) + 美化 HTML (供飞书展示/阅读), 同源不重复生成正文
+        export_md(f"review_{bb.topic}", best)
+        export_review_html(f"review_{bb.topic}", best)
 
         # 3) 可视化兜底: 始终从黑板图谱导出可交互 HTML
         export_graph_html(bb.topic)
