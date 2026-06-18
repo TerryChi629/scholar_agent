@@ -375,6 +375,21 @@
 
 ---
 
+### 阶段 23：M11 —— StateGraph-style 多 Agent 编排（借鉴 LangGraph，不引入重型运行时）
+
+> 背景：用户提出面试中可能会被问「有没有用到 LangGraph 框架」，希望按中期目标把 Orchestrator 做成更清晰的状态图编排，并把框架抉择写入进展。讨论结论：不直接引入 LangGraph / AutoGen / CrewAI 运行时，采用 LangGraph-style 的轻量状态图思想，保留自研可控性。
+
+- 👤 决策：①不说「用了 LangGraph 框架」，而说「借鉴 LangGraph 的 StateGraph 思想，自研轻量编排」；②AutoGen 群聊式不适合严谨证据链；③CrewAI 与现有黑板/角色流水线重叠；④LangGraph 思想最贴近，但外部运行时会增加依赖和调试成本
+- 🤖 **轻量 StateGraph（`core/state_graph.py` 新增）**：实现 `StateGraph[StateT]`，支持 `add_node` / `add_edge` / `add_conditional_edges` / `run(max_steps)`；提供 `START` / `END`；节点只接收共享状态，边决定流转，`max_steps` 防无限循环
+- 🤖 **Orchestrator 状态图化（`agents/orchestrator.py`）**：从硬编码线性流程 + 内联 retry loop，改成显式图：`plan -> retrieve -> read -> synthesize -> review`；`review` 条件边分为 `pass` / `retry` / `finish`；`retry` 进入 `reschedule -> synthesize -> review`；`pass` 进入 `remember -> done`
+- 🤖 **边界保持**：共享状态仍是 `Blackboard`；Agent 之间不直接聊天；每个关键节点继续 `save_checkpoint`；Reader 并行、Critic 反馈重调度、Critic 通过后才写 card memory 的红线不变
+- 🤖 **重调度语义修正**：`reschedule` 节点只做补救（补缺失卡片 / 标记需要重建图谱），真正重跑 Synthesizer 由图边负责，避免隐藏副作用和重复执行
+- 🤖 **面试话术**：可以讲「这是 Blackboard + StateGraph-style orchestration：节点 = Retriever/Reader/Synthesizer/Critic，边 = 条件流转，Blackboard = 共享状态；没有直接上 LangGraph，是为了保留证据链、checkpoint/resume、后端可观测和调试可控」
+
+> ✅ 达成：multi-agent 编排从隐式流程升级为显式状态图，具备 LangGraph 的核心组织思想，同时遵守项目轻框架红线。
+
+---
+
 ## 你（👤）需要本人完成的配置
 
 ### 1. 填入 LLM + Embedding API key（必需）

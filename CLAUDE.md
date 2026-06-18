@@ -359,6 +359,32 @@ ChatAgent.answer(question)
 - **两级入口前端（`web/index.html`，深色霓虹）**：第一层 `#landing` 全屏选入口（双卡片 research 青蓝 RESEARCH / chat 紫红 CHATAGENT，带 tag 标识），第二层 `#ws-research`（tab 导航）/ `#ws-chat`（侧栏 + 对话流），「← 入口」返回。ChatAgent 侧栏固定 280px：顶部 token 统计盒（累计 + 会话数）+「+ 新会话」，下方会话列表点击 `openSession` 回看；`renderHistoryBot` 渲染历史正文+token（无证据卡片，历史只存 answer），实时 `renderBotTurn` 含证据/引用/记忆 + token 徽章。
 - 主题：CSS 变量 --cyan/--blue/--purple/--magenta + body::before 辉光 / body::after 网格 + 玻璃拟态 + 渐变文字。零构建链不变（marked/KaTeX/Mermaid CDN）。
 
+### M11（StateGraph-style 多 Agent 编排）—— 设计文档
+
+#### M11.0 框架抉择
+
+- 面试/架构问题可明确回答：本项目**没有直接引入 LangGraph / AutoGen / CrewAI 运行时**，而是实现了一个轻量 `core/state_graph.py::StateGraph`，借鉴 LangGraph 的「节点 + 边 + 共享状态」思想。
+- 原因：ScholarStance 的核心壁垒是本地 RAG 证据链、checkpoint/resume、Critic 防幻觉和后端可观测；直接引入群聊式或重型编排会削弱可控性、增加调试成本。
+- 对三类框架的取舍：AutoGen 群聊式易失控，不适合证据链严谨流程；CrewAI 角色/任务流水线与现有黑板编排重叠；LangGraph 思想最贴合，但当前只吸收状态图模型，不引入外部依赖。
+
+#### M11.1 轻量 StateGraph（`core/state_graph.py`）
+
+- `StateGraph[Blackboard]` 提供最小运行时：`add_node` / `add_edge` / `add_conditional_edges` / `run(max_steps)`。
+- `START` / `END` 显式标记入口与终止，`max_steps` 防无限循环。
+- 节点函数只接收/修改共享 `Blackboard`，不私自持有事实状态；边负责阶段流转和条件分支。
+
+#### M11.2 Orchestrator 状态图（`agents/orchestrator.py`）
+
+- 显式流程：`plan -> retrieve -> read -> synthesize -> review`。
+- 条件边：`review` 后若 Critic 通过则 `remember -> done`；若未通过且仍有 retry 预算则 `reschedule -> synthesize -> review`；无可补救动作或耗尽 retry 则 `done`。
+- `reschedule` 只做补救动作（如补精读缺失论文 / 标记需要重建图谱），真正重跑 Synthesizer 由图边流转负责，避免隐藏副作用和重复执行。
+- 保留旧架构红线：Agent 之间不直接聊天，统一读写 `Blackboard`；每个关键节点后 `save_checkpoint`；Critic 通过才写 card memory。
+
+#### M11.3 面试表述边界
+
+- 推荐表述：「我们没有直接接 LangGraph 依赖，但实现了 LangGraph-style 的轻量状态图编排：节点是 Retriever/Reader/Synthesizer/Critic，边表达条件流转，Blackboard 是共享状态。」
+- 不要说「用了 LangGraph 框架」；应说「借鉴 LangGraph 的 StateGraph 思想，自研轻量运行时」，这样既诚实也能体现工程取舍。
+
 ---
 
 ## 7. 编码规范

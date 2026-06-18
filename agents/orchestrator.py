@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from core.blackboard import Blackboard, Status, SubTask
 from core.harness import save_checkpoint
 from core.run_context import set_active_blackboard
+from core.state_graph import END, START, StateGraph
 from agents.retriever import RetrieverAgent
 from agents.reader import ReaderAgent
 from agents.synthesizer import SynthesizerAgent
@@ -22,6 +23,10 @@ class Orchestrator:
         self.reader = ReaderAgent()
         self.synthesizer = SynthesizerAgent()
         self.critic = CriticAgent()
+        self._critic_passed = False
+        self._critic_attempts = 0
+        self._rescheduled = False
+        self._graph = self._build_graph()
 
     def run(self, bb: Blackboard) -> Blackboard:
         # 工具需要读黑板做确定性计算 (cluster/build_graph), 注册当前任务上下文
@@ -29,49 +34,98 @@ class Orchestrator:
         import time
         _t0 = time.time()
         try:
-            # 1) 规划
-            bb.plan = [
-                SubTask("retrieve"), SubTask("read"),
-                SubTask("synthesize"), SubTask("review"),
-            ]
-            bb.status = Status.RETRIEVING.value
-            save_checkpoint(bb)
-
-            # 2) 检索
-            self.retriever.run(bb, self.on_step)
-            bb.status = Status.READING.value
-            save_checkpoint(bb)
-
-            # 3) 精读: 并行 fork N 个 Reader (受 reader_concurrency 限制)
-            self._read_parallel(bb, bb.candidates)
-            bb.status = Status.SYNTHESIZING.value
-            save_checkpoint(bb)
-
-            # 4) 归纳建图 + 5) Critic 反馈重调度
-            self.synthesizer.run(bb, self.on_step)
-            bb.status = Status.REVIEWING.value
-            save_checkpoint(bb)
-
-            critic_passed = False
-            for _ in range(settings.critic_max_retry + 1):
-                if self.critic.review(bb, self.on_step):
-                    critic_passed = True
-                    break
-                # 不通过: 依据反馈定向重调度; 若无可补救动作则不再空转重试
-                if not self._reschedule(bb):
-                    break
-                save_checkpoint(bb)
-
-            # 质量闸门: 仅当 Critic 通过时, 才把卡片沉淀进跨任务记忆 (杜绝低质固化)
-            if critic_passed:
-                self._remember_cards(bb)
-
-            bb.status = Status.DONE.value
-            save_checkpoint(bb)
-            self._notify_done(bb, critic_passed, round(time.time() - _t0, 1))
+            self._critic_passed = False
+            self._critic_attempts = 0
+            self._rescheduled = False
+            self._graph.run(bb, max_steps=20 + settings.critic_max_retry * 3)
+            self._notify_done(bb, self._critic_passed, round(time.time() - _t0, 1))
             return bb
         finally:
             set_active_blackboard(None)
+
+    def _build_graph(self) -> StateGraph[Blackboard]:
+        """构造显式状态图。
+
+        这是 LangGraph-style 的轻量实现: 节点 = 业务阶段, 边 = 流转/条件分支,
+        共享状态 = Blackboard。保留自研运行时以确保 checkpoint/证据链/调试可控。
+        """
+        graph: StateGraph[Blackboard] = StateGraph()
+        graph.add_node("plan", self._node_plan)
+        graph.add_node("retrieve", self._node_retrieve)
+        graph.add_node("read", self._node_read)
+        graph.add_node("synthesize", self._node_synthesize)
+        graph.add_node("review", self._node_review)
+        graph.add_node("reschedule", self._node_reschedule)
+        graph.add_node("remember", self._node_remember)
+        graph.add_node("done", self._node_done)
+
+        graph.add_edge(START, "plan")
+        graph.add_edge("plan", "retrieve")
+        graph.add_edge("retrieve", "read")
+        graph.add_edge("read", "synthesize")
+        graph.add_edge("synthesize", "review")
+        graph.add_conditional_edges("review", self._route_after_review, {
+            "pass": "remember",
+            "retry": "reschedule",
+            "finish": "done",
+        })
+        graph.add_conditional_edges("reschedule", self._route_after_reschedule, {
+            "retry": "synthesize",
+            "finish": "done",
+        })
+        graph.add_edge("remember", "done")
+        graph.add_edge("done", END)
+        return graph
+
+    def _node_plan(self, bb: Blackboard) -> None:
+        bb.plan = [
+            SubTask("retrieve"), SubTask("read"),
+            SubTask("synthesize"), SubTask("review"),
+        ]
+        bb.status = Status.RETRIEVING.value
+        save_checkpoint(bb)
+
+    def _node_retrieve(self, bb: Blackboard) -> None:
+        self.retriever.run(bb, self.on_step)
+        bb.status = Status.READING.value
+        save_checkpoint(bb)
+
+    def _node_read(self, bb: Blackboard) -> None:
+        self._read_parallel(bb, bb.candidates)
+        bb.status = Status.SYNTHESIZING.value
+        save_checkpoint(bb)
+
+    def _node_synthesize(self, bb: Blackboard) -> None:
+        self.synthesizer.run(bb, self.on_step)
+        bb.status = Status.REVIEWING.value
+        save_checkpoint(bb)
+
+    def _node_review(self, bb: Blackboard) -> None:
+        self._critic_attempts += 1
+        self._critic_passed = self.critic.review(bb, self.on_step)
+
+    def _route_after_review(self, bb: Blackboard) -> str:
+        if self._critic_passed:
+            return "pass"
+        if self._critic_attempts <= settings.critic_max_retry:
+            return "retry"
+        return "finish"
+
+    def _node_reschedule(self, bb: Blackboard) -> None:
+        # 不通过: 依据反馈定向重调度; 若无可补救动作则不再空转重试
+        self._rescheduled = self._reschedule(bb)
+        save_checkpoint(bb)
+
+    def _route_after_reschedule(self, bb: Blackboard) -> str:
+        return "retry" if self._rescheduled else "finish"
+
+    def _node_remember(self, bb: Blackboard) -> None:
+        # 质量闸门: 仅当 Critic 通过时, 才把卡片沉淀进跨任务记忆 (杜绝低质固化)
+        self._remember_cards(bb)
+
+    def _node_done(self, bb: Blackboard) -> None:
+        bb.status = Status.DONE.value
+        save_checkpoint(bb)
 
     @staticmethod
     def _remember_cards(bb: Blackboard) -> None:
@@ -141,14 +195,12 @@ class Orchestrator:
         重跑 Synthesizer 也补不出证据 —— 这类问题应在 Reader 层解决, 不在此循环里硬刷)。
         """
         acted = False
-        # 完整性: 缺卡片 -> 补精读缺失论文 (可补救)
+        # 完整性: 缺卡片 -> 补精读缺失论文, 随后由图边流转回 synthesize。
         missing = [pid for pid in bb.candidates if pid not in bb.cards]
         if missing:
             self._read_parallel(bb, missing)
-            self.synthesizer.run(bb, self.on_step)  # 卡片变化, 重新建图+综述
             acted = True
-        # 图谱缺失 -> 重跑 Synthesizer (可补救)
+        # 图谱缺失 -> 让图边流转回 synthesize 重建图谱。
         elif bb.graph is None or not bb.graph.nodes:
-            self.synthesizer.run(bb, self.on_step)
             acted = True
         return acted
