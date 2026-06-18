@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 
@@ -44,6 +45,7 @@ def _conn() -> sqlite3.Connection:
             role TEXT,
             content TEXT,
             tokens INTEGER DEFAULT 0,
+            evidence_json TEXT,
             created_at REAL
         )"""
     )
@@ -54,6 +56,7 @@ def _conn() -> sqlite3.Connection:
     _ensure_column(conn, "chat_sessions", "title", "TEXT")
     _ensure_column(conn, "chat_sessions", "total_tokens", "INTEGER DEFAULT 0")
     _ensure_column(conn, "chat_turns", "tokens", "INTEGER DEFAULT 0")
+    _ensure_column(conn, "chat_turns", "evidence_json", "TEXT")
     return conn
 
 
@@ -70,8 +73,9 @@ def _next_seq(conn: sqlite3.Connection, session_id: str) -> int:
     return (row[0] + 1) if row and row[0] is not None else 0
 
 
-def append_turn(session_id: str, role: str, content: str, tokens: int = 0) -> None:
-    """追加一轮对话 (role: user|assistant)。tokens: 本轮 LLM 消耗 (assistant 轮才有)。"""
+def append_turn(session_id: str, role: str, content: str, tokens: int = 0,
+                evidence: list | None = None) -> None:
+    """追加一轮对话。tokens/evidence 主要用于 assistant 轮的 token 与证据回看。"""
     if not settings.chat_session_enabled or not (session_id or "").strip():
         return
     content = (content or "").strip()
@@ -81,9 +85,12 @@ def append_turn(session_id: str, role: str, content: str, tokens: int = 0) -> No
     now = time.time()
     with conn:
         seq = _next_seq(conn, session_id)
+        ev_json = json.dumps(evidence or [], ensure_ascii=False) if evidence else None
         conn.execute(
-            "INSERT INTO chat_turns (session_id, seq, role, content, tokens, created_at) VALUES (?,?,?,?,?,?)",
-            (session_id, seq, role, content, int(tokens or 0), now),
+            """INSERT INTO chat_turns
+               (session_id, seq, role, content, tokens, evidence_json, created_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (session_id, seq, role, content, int(tokens or 0), ev_json, now),
         )
         # 标题取首条 user 问题 (截断); total_tokens 累加。
         title = content[:40] if (role == "user" and seq == 0) else None
@@ -272,7 +279,7 @@ def get_session(session_id: str) -> dict:
         (session_id,),
     ).fetchone()
     turns = conn.execute(
-        "SELECT seq, role, content, tokens, created_at FROM chat_turns WHERE session_id=? ORDER BY seq ASC",
+        "SELECT seq, role, content, tokens, evidence_json, created_at FROM chat_turns WHERE session_id=? ORDER BY seq ASC",
         (session_id,),
     ).fetchall()
     conn.close()
@@ -286,7 +293,24 @@ def get_session(session_id: str) -> dict:
         "created_at": srow[3] if srow else None,
         "updated_at": srow[4] if srow else None,
         "turns": [
-            {"seq": t[0], "role": t[1], "content": t[2], "tokens": t[3] or 0, "created_at": t[4]}
+            {
+                "seq": t[0],
+                "role": t[1],
+                "content": t[2],
+                "tokens": t[3] or 0,
+                "evidence": _parse_json_list(t[4]),
+                "created_at": t[5],
+            }
             for t in turns
         ],
     }
+
+
+def _parse_json_list(raw: str | None) -> list:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, list) else []
+    except Exception:  # noqa: BLE001  历史坏数据不影响会话回看
+        return []

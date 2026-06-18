@@ -52,7 +52,8 @@ class ChatAgent:
         if session_id:
             session_mod.append_turn(session_id, "user", question)
             session_mod.append_turn(session_id, "assistant", result.answer,
-                                    tokens=(result.usage or {}).get("total_tokens", 0))
+                                    tokens=(result.usage or {}).get("total_tokens", 0),
+                                    evidence=result.evidence)
             session_mod.maybe_summarize(session_id)
         return result
 

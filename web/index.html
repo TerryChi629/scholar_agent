@@ -147,7 +147,7 @@
   .answer .cite:hover{background:var(--cyan);color:#04121a}
   .refs{background:var(--panel);border:1px solid var(--border);border-radius:13px;padding:16px 20px;backdrop-filter:blur(10px);margin-bottom:14px}
   .refs h3{font-size:14px;margin:0 0 12px;font-weight:600}
-  .ref{border-left:3px solid var(--border);padding:8px 12px;margin-bottom:10px;background:rgba(0,0,0,.2);border-radius:0 8px 8px 0}
+  .ref{border-left:3px solid var(--border);padding:8px 12px;margin-bottom:10px;background:rgba(0,0,0,.2);border-radius:0 8px 8px 0;cursor:pointer}
   .ref.hl{border-left-color:var(--cyan);background:rgba(34,211,238,.1)}
   .ref .rmeta{font-size:12px;color:var(--muted);margin-bottom:4px}
   .ref .rq{font-size:13px;color:var(--text);max-height:0;overflow:hidden;transition:max-height .25s}
@@ -632,7 +632,7 @@ async function openSession(id){
     const d = await api('/chat/sessions/' + encodeURIComponent(id));
     (d.turns||[]).forEach(t => {
       if(t.role === 'user') addUserTurn(t.content);
-      else renderHistoryBot(t.content, t.tokens);
+      else renderHistoryBot(t.content, t.tokens, t.evidence || []);
     });
   }catch(e){ toast('载入会话失败: ' + e.message); }
   loadSessions();
@@ -658,18 +658,37 @@ function addUserTurn(q){
   t.scrollIntoView({behavior:'smooth', block:'end'});
 }
 
-// 历史回看的 bot 轮 (只有正文 + token, 无证据卡片)
-function renderHistoryBot(content, tokens){
+// 历史回看的 bot 轮: 正文 + token + 已落库证据卡片。
+function renderHistoryBot(content, tokens, refs){
   removeIntro();
   const t = document.createElement('div');
   t.className = 'turn bot';
   const tid = Math.random().toString(36).slice(2,8);
+  t.dataset.tid = tid;
   let html = window.marked ? marked.parse(content || '') : esc(content||'');
-  html = linkCitations(html, 0);
+  html = linkCitations(html, refs.length);
   const tok = tokens ? `<span class="tok">${fmtTok(tokens)} tok</span>` : '';
-  t.innerHTML = `<div class="who"><span class="ai">ChatAgent</span>${tok}</div><div class="answer">${html}</div>`;
+  t.innerHTML = `<div class="who"><span class="ai">ChatAgent</span>${tok}</div><div class="answer">${html}</div>${renderRefsHtml(tid, refs)}`;
   $('#chat-thread').appendChild(t);
   renderAnswerExtras(t.querySelector('.answer'), tid);
+  bindRefEvents(t, tid);
+}
+
+function renderRefsHtml(tid, refs){
+  return refs.length ? `<div class="refs"><h3>原文证据（${refs.length}）· 默认折叠，点击引用编号或证据卡片展开原文</h3>` +
+    refs.map(r => `<div class="ref" id="ref-${tid}-${r.ref}" data-ref="${r.ref}">
+      <div class="rmeta">[${r.ref}] 《${esc(r.title)}》(${r.year})${r.section?' · '+esc(r.section):''}${r.page?' · p'+r.page:''}
+        <span class="rtoggle" data-ref="${r.ref}">展开原文 ▾</span></div>
+      <div class="rq">${esc(r.quote||'')}</div></div>`).join('') + `</div>` : '';
+}
+
+function bindRefEvents(t, tid){
+  t.querySelectorAll('.cite').forEach(c => c.onclick = () => focusRef(tid, c.dataset.ref));
+  t.querySelectorAll('.rtoggle').forEach(x => x.onclick = e => {
+    e.stopPropagation();
+    toggleRef(tid, x.dataset.ref);
+  });
+  t.querySelectorAll('.ref').forEach(x => x.onclick = () => toggleRef(tid, x.dataset.ref));
 }
 
 function renderBotTurn(t, d){
@@ -680,18 +699,12 @@ function renderBotTurn(t, d){
     ? `<div class="mem">已注入偏好/规则：` + d.used_memory.map(m =>
         `<span class="tag">${esc(m.category)}</span>${esc(m.content)}`).join(' ') + `</div>` : '';
   const tid = t.dataset.tid;
-  const refsHtml = refs.length ? `<div class="refs"><h3>证据来源（${refs.length}）· 点引用编号或下方卡片展开原文</h3>` +
-    refs.map(r => `<div class="ref" id="ref-${tid}-${r.ref}">
-      <div class="rmeta">[${r.ref}] 《${esc(r.title)}》(${r.year})${r.section?' · '+esc(r.section):''}${r.page?' · p'+r.page:''}
-        <span class="rtoggle" data-ref="${r.ref}">展开原文 ▾</span></div>
-      <div class="rq">${esc(r.quote||'')}</div></div>`).join('') + `</div>` : '';
   const intent = d.intent ? `<span class="intent">· ${esc(d.intent)}</span>` : '';
   const tok = d.usage && d.usage.total_tokens ? `<span class="tok">${fmtTok(d.usage.total_tokens)} tok</span>` : '';
   t.innerHTML = `<div class="who"><span class="ai">ChatAgent</span>${intent}${tok}</div>`
-    + `<div class="answer">${html}${mem}</div>${refsHtml}`;
+    + `<div class="answer">${html}${mem}</div>${renderRefsHtml(tid, refs)}`;
   renderAnswerExtras(t.querySelector('.answer'), tid);
-  t.querySelectorAll('.cite').forEach(c => c.onclick = () => focusRef(tid, c.dataset.ref));
-  t.querySelectorAll('.rtoggle').forEach(x => x.onclick = () => toggleRef(tid, x.dataset.ref));
+  bindRefEvents(t, tid);
   t.scrollIntoView({behavior:'smooth', block:'start'});
 }
 
@@ -721,9 +734,16 @@ function focusRef(tid, n){
   const el = $('#ref-' + tid + '-' + n); if(!el) return;
   el.closest('.refs').querySelectorAll('.ref').forEach(r => r.classList.remove('hl'));
   el.classList.add('hl', 'open');
+  const btn = el.querySelector('.rtoggle'); if(btn) btn.textContent = '收起原文 ▴';
   el.querySelector('.rq').scrollHeight; el.scrollIntoView({behavior:'smooth', block:'center'});
 }
-function toggleRef(tid, n){ const el = $('#ref-' + tid + '-' + n); if(el) el.classList.toggle('open'); }
+function toggleRef(tid, n){
+  const el = $('#ref-' + tid + '-' + n);
+  if(!el) return;
+  el.classList.toggle('open');
+  const btn = el.querySelector('.rtoggle');
+  if(btn) btn.textContent = el.classList.contains('open') ? '收起原文 ▴' : '展开原文 ▾';
+}
 
 // ===== 初始化 =====
 checkHealth(); loadTasks();
