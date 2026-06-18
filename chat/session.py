@@ -189,8 +189,28 @@ def maybe_summarize(session_id: str) -> None:
 
 # —— 会话记录查询 (供前端历史侧栏 / token 统计) ——
 
-def list_sessions(limit: int = 50) -> list[dict]:
+def prune_old_sessions(keep: int = 10) -> int:
+    """保留最近 keep 个会话, 删除更早会话及其 turns。返回删除的会话数。"""
+    keep = max(int(keep or 10), 1)
+    conn = _conn()
+    rows = conn.execute(
+        "SELECT session_id FROM chat_sessions ORDER BY updated_at DESC LIMIT -1 OFFSET ?",
+        (keep,),
+    ).fetchall()
+    ids = [r[0] for r in rows]
+    if not ids:
+        conn.close()
+        return 0
+    with conn:
+        conn.executemany("DELETE FROM chat_turns WHERE session_id=?", [(i,) for i in ids])
+        conn.executemany("DELETE FROM chat_sessions WHERE session_id=?", [(i,) for i in ids])
+    conn.close()
+    return len(ids)
+
+
+def list_sessions(limit: int = 10) -> list[dict]:
     """列出全部会话 (按最近更新倒序), 含标题/轮数/累计 token。"""
+    prune_old_sessions(keep=10)
     conn = _conn()
     rows = conn.execute(
         """SELECT s.session_id, s.title, s.total_tokens, s.created_at, s.updated_at,
@@ -211,6 +231,37 @@ def list_sessions(limit: int = 50) -> list[dict]:
         }
         for r in rows
     ]
+
+
+def rename_session(session_id: str, title: str) -> bool:
+    """重命名会话。返回是否命中会话。"""
+    title = " ".join((title or "").split())[:60]
+    if not session_id or not title:
+        return False
+    conn = _conn()
+    with conn:
+        cur = conn.execute(
+            "UPDATE chat_sessions SET title=?, updated_at=? WHERE session_id=?",
+            (title, time.time(), session_id),
+        )
+    conn.close()
+    return cur.rowcount > 0
+
+
+def delete_session(session_id: str) -> bool:
+    """删除单个会话及其全部 turns。返回是否命中会话。"""
+    if not session_id:
+        return False
+    conn = _conn()
+    exists = conn.execute(
+        "SELECT 1 FROM chat_sessions WHERE session_id=? LIMIT 1",
+        (session_id,),
+    ).fetchone()
+    with conn:
+        conn.execute("DELETE FROM chat_turns WHERE session_id=?", (session_id,))
+        conn.execute("DELETE FROM chat_sessions WHERE session_id=?", (session_id,))
+    conn.close()
+    return bool(exists)
 
 
 def get_session(session_id: str) -> dict:

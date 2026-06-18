@@ -47,6 +47,10 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
 
 
+class RenameSessionRequest(BaseModel):
+    title: str
+
+
 def _run_map(task_id: str, topic: str) -> None:
     bb = Blackboard(task_id=task_id, topic=topic)
     try:
@@ -119,9 +123,10 @@ def chat(req: ChatRequest):
 
 
 @app.get("/chat/sessions")
-def list_chat_sessions(limit: int = Query(50, ge=1, le=200)):
+def list_chat_sessions(limit: int = Query(10, ge=1, le=10)):
     """列出历史会话 (标题/轮数/累计 token), 供前端历史侧栏。"""
     from chat import session as session_mod
+    session_mod.prune_old_sessions(keep=10)
     items = session_mod.list_sessions(limit=limit)
     return {
         "total": len(items),
@@ -138,6 +143,24 @@ def get_chat_session(session_id: str):
     if not data:
         raise HTTPException(status_code=404, detail="session not found")
     return data
+
+
+@app.patch("/chat/sessions/{session_id}")
+def rename_chat_session(session_id: str, req: RenameSessionRequest):
+    """重命名历史会话。"""
+    from chat import session as session_mod
+    if not session_mod.rename_session(session_id, req.title):
+        raise HTTPException(status_code=404, detail="session not found")
+    return session_mod.get_session(session_id)
+
+
+@app.delete("/chat/sessions/{session_id}")
+def delete_chat_session(session_id: str):
+    """删除历史会话及其 turns。"""
+    from chat import session as session_mod
+    if not session_mod.delete_session(session_id):
+        raise HTTPException(status_code=404, detail="session not found")
+    return {"ok": True, "session_id": session_id}
 
 
 @app.get("/healthz")
