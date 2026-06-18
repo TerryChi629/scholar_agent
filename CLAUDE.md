@@ -63,7 +63,7 @@ L1 底座层   tools/ + skills/ + rag/ + mcp_clients/ + memory/
 | LLM | DeepSeek / GLM | OpenAI 兼容，`config.py` 热切换，统一走 `core/llm.py` |
 | Embedding | API（初版） | `rag/embedder.py` 留了 `LocalEmbedder` 接口，后期换自训模型**不动上层** |
 | 向量库 | ChromaDB | 本地持久化，零服务 |
-| 检索 | Hybrid（向量+BM25+rerank） | 当前只实现向量，BM25/rerank 是高优 TODO |
+| 检索 | Hybrid（向量+BM25+RRF+规则 rerank） | 向量+BM25+RRF 已实现；rerank 为极轻量确定性规则（章节/关键词弱加分），非 cross-encoder |
 | PDF | PyMuPDF (`import fitz`) | |
 | 存储 | SQLite | 会话/记忆 |
 
@@ -113,6 +113,17 @@ L1 底座层   tools/ + skills/ + rag/ + mcp_clients/ + memory/
   - 任务异步化已有骨架（立即返回 `task_id`）；补：错误态/进度态返回、`/tasks` 列表分页、健康检查 `/healthz`。
   - 保持「不在沙箱起常驻服务」红线，仅作本地手动调试与接口契约。
 
+### M5（RAG 质量提质：召回 / 抽取 / 防幻觉）
+
+> 背景：M1-M4 跑通闭环与工程化底座后，针对弱模型（glm-4-flash）下抽取雷同空泛、召回主题漂移、跨篇串味等质量问题，做一轮**确定性增强**改造。原则不变：能用确定性算法的环节不交给 LLM，所有断言可回溯。
+
+- [x] **A 增量入库 + 幂等写入**（`rag/ingest.py` + `rag/store.py`）：`ingest_dir` 以 `_paper_id` 为身份跳过库内已有论文，只处理新增；`VectorStore.add` 改 `upsert`，重复入库不报错不浪费。
+- [x] **B 查询扩展动态化**（`tools/expand_query`）：用 LLM 围绕 topic 动态生成 5-8 个查询（中文+英文术语+方法词），**严禁硬编码示例主题词**（防主题漂移），失败/为空回退 `[topic]`，强制含原 topic 并去重。
+- [x] **C 多维度精读 + D paper_id 自动注入 + E 去重**（`agents/reader.py` + `core/run_context.py` + `tools/rag_query`）：Reader 对 4 个核心维度（核心贡献/方法/实验/局限）预检索、跨维度按 `chunk_id` 合并去重后把真实片段注入 prompt（喂弱模型真材实料）；用 thread-local 登记当前精读 `paper_id`，`rag_query` 在模型漏传时**自动注入**（不报错打断），根治跨篇串味。
+- [x] **F 极轻量规则 rerank**（`rag/retrieve.py`）：RRF 融合后叠加确定性弱加分（核心章节命中 + query 关键词命中，系数远小于 RRF 量级，仅并列时决胜），不引入 cross-encoder、零额外 IO。
+- [x] **I evidence 为空即打回**（`agents/critic.py`）：补齐漏洞——`evidence_spans` 整体为空的卡片直接判不通过（此前空数组反而免检），守住防幻觉命脉。
+- [x] **J 模板化/雷同检测**（`agents/critic.py`）：套话词典命中 + 跨卡 `core_claim` Jaccard 相似度过高 → **仅告警 + 建议重读，不改 passed**（不击杀，避免误杀真实但简短的结论）。
+
 ---
 
 ## 7. 编码规范
@@ -142,3 +153,62 @@ L1 底座层   tools/ + skills/ + rag/ + mcp_clients/ + memory/
 - **M2 达标**：综述里每条引用都能回溯到库内真实片段（零幻觉），图谱每条边有 rationale。
 - **M3 达标**：支持 `resume <task_id>` 断点续跑；飞书能收到完成推送。
 - **M4 达标**：LLM 调用具备重试退避 + 限流 + 主备降级（断网/限流不致整体失败）；embedding/检索命中缓存可显著降调用次数；每个任务可导出含耗时/token 的结构化链路日志；FastAPI 能异步建任务、查状态、健康检查。
+
+---
+
+## 10. Memory 架构设计（Agent 记忆系统）
+
+> 用 Agent 开发的标准记忆分层（工作 / 情景 / 语义 / 程序）来审视本项目。**核心判断：横向（单任务内）记忆完整，纵向（跨任务沉淀）记忆几乎为零**——项目擅长「把一件事做完且能中途恢复」，但不擅长「做完后变得更聪明」。
+
+### 10.1 四层记忆现状
+
+| 层 | 落点 | 状态 | 说明 |
+|---|---|---|---|
+| **L1 工作记忆**（单次 loop 内） | `core/agent_loop.py` 的 `messages` + `harness.compress_context` | ✅ 扎实 | think/act/observe 沉在消息链；超预算时**确定性摘要**旧轮次（不调 LLM），并用 `_is_safe_boundary` 保护 tool_call 配对不被裁断。 |
+| **L2 情景记忆**（跨 step / 会话） | `Blackboard` + `tasks` 表 checkpoint | ⚠️ 只用了一半 | 黑板是「本次任务发生了什么」的完整情景，能存盘 → `resume` 续跑。**但仅服务于断点恢复，从未当作「过往经验」复用**。 |
+| **L3 语义记忆**（长期事实） | 片段级：ChromaDB + embedding 缓存；卡片级：`memory/__init__.py::memory_cards` | 🔶 片段成熟 / 卡片空转 | 片段级是 RAG 地基，跨任务复用良好。**卡片级 `remember_card/recall_card` 已写好但零调用**——同一篇论文换 topic 就从头精读（烧 token）。 |
+| **L4 程序记忆**（怎么做事 / 偏好） | 规则：各 Agent `system_prompt`（硬编码）；偏好：`memory/__init__.py::user_profile` | ❌ 静态 / 空表 | 规则写死在 prompt，不可学习；`user_profile` 仅建表，读写是 TODO，关注方向/常用检索词/综述风格均未沉淀。 |
+
+读写时机现状：工作记忆每轮自动管理；片段级语义记忆由 Retriever/Reader 主动召回；checkpoint 每个关键步骤后写盘；**卡片库与用户画像从不写**。
+
+### 10.2 目标架构蓝图
+
+设计原则沿用项目红线：**确定性优先、可回溯、不引框架、分层不混淆**。
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ L1 工作记忆   [保持] messages + compress_context                   │
+├─────────────────────────────────────────────────────────────────┤
+│ L2 情景记忆   [升级] tasks 表 + topic 向量索引                      │
+│              新任务启动按 topic 相似度召回历史图谱/结论, 作为"先验   │
+│              提示"(人/Critic 可见、可拒绝), 不直接信任进产物         │
+├─────────────────────────────────────────────────────────────────┤
+│ L3 语义记忆   片段级[保持] ChromaDB                                │
+│              卡片级[接通] memory_cards ←→ Reader                   │
+│                写: 精读成功后存 topic 无关字段                      │
+│                读: 命中则跳过主体精读, 仅按新 topic 重抽 stance      │
+├─────────────────────────────────────────────────────────────────┤
+│ L4 程序记忆   规则[保持] system_prompt                             │
+│              偏好[接通] user_profile ──反哺──> expand_query        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 10.3 三个关键设计决策（每层一个核心 tradeoff）
+
+- **L3 卡片复用 → 分字段复用**（非整卡复用）：`PaperCard` 拆两类——
+  - *topic 无关*（论文固有，可跨任务复用）：`title/authors/year/venue/core_claim/method/method_family/key_results/limitations/evidence_spans`
+  - *topic 相关*（随研究方向变化）：`stance_tags/opposes`
+  - 命中记忆时复用 topic 无关字段、按新 topic 轻量重抽 stance，既省掉最贵的主体精读，又避免「A topic 的立场套到 B topic」污染立场图谱。
+- **L2 情景召回 → 提示参考而非自动信任**：历史图谱可能基于旧库 / 旧 topic，直接注入会污染新结论。仅作先验展示，由 Critic / 人决定是否采纳。
+- **横切·防记忆污染**：记忆 ≠ 真相。所有跨任务召回的内容必须能在**当前向量库二次验证**（复用 Critic 的 quote 回查机制），验证不过的记忆降级或丢弃，绝不直接进最终产物。反思式写入也走确定性规则（如「仅通过 Critic 的卡片才 `remember`」），不引入 LLM 自反思黑盒。
+
+### 10.4 落地优先级
+
+| 优先级 | 项 | 价值 / 风险 |
+|---|---|---|
+| **P0 ✅ 已落地（M6）** | L3 卡片级接通（分字段复用 + Critic 写入闸门） | 价值最高（直接省 token），风险低，与 M5 增量入库同源 |
+| **P1** | L2 情景召回（topic 相似先验，仅展示不信任） | 提升新任务起点质量，需为 task 加 topic 向量索引 |
+| **P2（暂不做）** | L4 `user_profile`（确定性统计沉淀 → 反哺 `expand_query`） | 个性化，价值中等，**易过度设计，优先级低** |
+| **P3（暂不做）** | L1 摘要分级、L2/L3 反思式写入 | 锦上添花，**优先级最低** |
+
+> 当前结论：**P0 已落地（见 M6）**——卡片级语义记忆接通，只存 topic 无关字段、仅 Critic 通过后写入、命中后按新 topic 重抽 stance。P1 视重复跑库频率再启动；P2 / P3 暂不投入，避免过度设计。

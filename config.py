@@ -44,6 +44,9 @@ class Settings:
     cache_enabled: bool = field(default_factory=lambda: _get("CACHE_ENABLED", "1") not in ("0", "false", "False"))
     retrieval_cache_ttl: int = field(default_factory=lambda: int(_get("RETRIEVAL_CACHE_TTL", "600")))
 
+    # —— M6 记忆: 卡片级语义记忆 (跨任务复用已精读论文的 topic 无关字段) ——
+    memory_enabled: bool = field(default_factory=lambda: _get("MEMORY_ENABLED", "1") not in ("0", "false", "False"))
+
     # —— M4 可观测: 结构化日志 ——
     log_level: str = field(default_factory=lambda: _get("LOG_LEVEL", "INFO"))
     log_to_file: bool = field(default_factory=lambda: _get("LOG_TO_FILE", "1") not in ("0", "false", "False"))
@@ -67,6 +70,9 @@ class Settings:
 
     # —— 飞书 ——
     feishu_webhook_url: str = field(default_factory=lambda: _get("FEISHU_WEBHOOK_URL"))
+    # 富卡片按钮指向的产物可达地址 (B1: FastAPI 静态托管 storage 产物)。
+    # 同内网协作时填本机可达地址, 如 http://192.168.x.x:8000; 默认 localhost。
+    public_base_url: str = field(default_factory=lambda: _get("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/"))
 
     def chat_model(self) -> str:
         return self.glm_chat_model if self.llm_provider == "glm" else self.deepseek_chat_model

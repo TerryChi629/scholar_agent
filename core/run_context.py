@@ -10,9 +10,15 @@
 """
 from __future__ import annotations
 
+import threading
+
 from core.blackboard import Blackboard
 
 _active: Blackboard | None = None
+
+# Reader 并行精读时, 各线程"当前锁定的 paper_id"。用 thread-local 隔离, 供 rag_query
+# 在模型漏传 paper_id 时自动注入, 杜绝跨篇串味 (方案 D: 自动注入而非报错打断)。
+_reader_ctx = threading.local()
 
 
 def set_active_blackboard(bb: Blackboard | None) -> None:
@@ -22,3 +28,13 @@ def set_active_blackboard(bb: Blackboard | None) -> None:
 
 def get_active_blackboard() -> Blackboard | None:
     return _active
+
+
+def set_reader_paper_id(paper_id: str | None) -> None:
+    """登记当前线程正在精读的 paper_id (None 表示清除)。"""
+    _reader_ctx.paper_id = paper_id
+
+
+def get_reader_paper_id() -> str | None:
+    """取当前线程正在精读的 paper_id; 非 Reader 上下文返回 None。"""
+    return getattr(_reader_ctx, "paper_id", None)

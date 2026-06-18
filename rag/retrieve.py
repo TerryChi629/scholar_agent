@@ -22,6 +22,16 @@ _RRF_K = 60
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 
+# F: 极轻量规则 rerank 的弱加分系数。刻意压得很小, 只在 RRF 分数接近时起决胜微调,
+# 不颠覆语义/字面融合的主排序。
+_RERANK_SECTION_BONUS = 0.05   # 命中核心章节的弱加分
+_RERANK_KEYWORD_BONUS = 0.01   # 每个 query 关键词在片段命中的弱加分 (有上限)
+_RERANK_KEYWORD_CAP = 0.05     # 关键词加分上限
+_CORE_SECTION_RE = re.compile(
+    r"abstract|method|approach|model|framework|experiment|evaluation|result",
+    re.IGNORECASE,
+)
+
 # —— M4 检索结果 TTL 缓存 (进程内, 线程安全): 相同查询短期内直接复用 ——
 _cache_lock = threading.Lock()
 _retrieval_cache: dict[tuple, tuple[float, list[Chunk]]] = {}
@@ -58,6 +68,29 @@ def _rrf_fuse(rankings: list[list[Chunk]], top_k: int) -> list[Chunk]:
         chunk.score = round(score, 6)  # 融合分写回, 便于上层展示/排序
         out.append(chunk)
     return out
+
+
+def _rule_rerank(query: str, chunks: list[Chunk]) -> list[Chunk]:
+    """极轻量规则 rerank: 在 RRF 融合分基础上叠加弱加分后重排。
+
+    确定性、无模型、无额外 IO:
+    - 核心章节 (method/experiment/abstract...) 命中给小幅加分;
+    - query 关键词在片段文本命中按命中数小幅加分 (有上限)。
+    加分系数远小于 RRF 分量级差, 只在并列/接近时决胜, 不颠覆主排序。
+    """
+    qtokens = set(_tokenize(query))
+    for c in chunks:
+        bonus = 0.0
+        section = (c.metadata or {}).get("section", "") or ""
+        if _CORE_SECTION_RE.search(section):
+            bonus += _RERANK_SECTION_BONUS
+        if qtokens:
+            ctokens = set(_tokenize(c.text))
+            hit = len(qtokens & ctokens)
+            bonus += min(hit * _RERANK_KEYWORD_BONUS, _RERANK_KEYWORD_CAP)
+        c.score = round(c.score + bonus, 6)
+    chunks.sort(key=lambda x: x.score, reverse=True)
+    return chunks
 
 
 def hybrid_search(
@@ -107,5 +140,7 @@ def _hybrid_search_uncached(
     bm25_hits = _bm25_search(query, corpus, top_k=fetch_n) if corpus else []
 
     if not bm25_hits:  # 库为空或仅向量可用时, 退化为纯向量结果。
-        return vector_hits[:top_k]
-    return _rrf_fuse([vector_hits, bm25_hits], top_k=top_k)
+        return _rule_rerank(query, vector_hits[:top_k])
+    # 先多取一些做 RRF 融合, 再做极轻量规则 rerank 决胜, 最后裁剪到 top_k。
+    fused = _rrf_fuse([vector_hits, bm25_hits], top_k=fetch_n)
+    return _rule_rerank(query, fused)[:top_k]

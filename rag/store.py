@@ -33,7 +33,8 @@ class VectorStore:
         if not chunks:
             return
         embeddings = self._embedder.embed([c.text for c in chunks])
-        self._col.add(
+        # upsert 而非 add: 同 chunk_id 重复写入时覆盖而非报错 (幂等, 防重复入库冲突)。
+        self._col.upsert(
             ids=[c.chunk_id for c in chunks],
             embeddings=embeddings,
             documents=[c.text for c in chunks],

@@ -174,6 +174,72 @@
 
 > ✅ **M4 里程碑达成**：LLM 调用具备重试退避 + 限流 + 主备降级；embedding/检索/卡片三级缓存显著降调用；可导出含耗时/token 的结构化链路日志；FastAPI 能异步建任务、分页查状态、健康检查。
 
+### 阶段 12：M5 —— RAG 质量提质（召回 / 抽取 / 防幻觉）
+
+> 背景：M1-M4 跑通闭环与工程化底座后，实跑发现弱模型（glm-4-flash）下抽取雷同空泛、查询扩展为占位、跨篇串味、空证据卡片免检等质量短板。本阶段做一轮**确定性增强**改造（先评审 A-J 十项方案，敲定做 A/B/C/D/E/F/I/J），不改五层分层、不引入重型框架。
+
+- 👤 以「资深 RAG / 多 Agent 架构评审专家」视角评审 A-J 十项方案，敲定实施集合并定路径：C 用**代码层预检索注入**、A 仅做 **ingest 增量+幂等**（不在 map/ask 自动触发）
+- 🤖 **A 增量入库 + 幂等写入**（`rag/ingest.py` + `rag/store.py`）：
+  - `ingest_dir` 开头取 `store.list_papers()` 已有 `paper_id`，遍历 PDF 时**已存在的直接跳过**（不解析、不 embedding），返回统计扩为 `{papers, added, skipped, chunks, detail}`
+  - `VectorStore.add` 由 `_col.add` 改 `_col.upsert`：同 `chunk_id` 重复写入覆盖而非冲突报错（修掉重复入库真 bug）
+- 🤖 **B 查询扩展动态化**（`tools/__init__.py::expand_query`）：
+  - 由 stub（`return [topic]`）改为 LLM 动态生成 5-8 个查询（中文表述 + 英文术语 + 核心方法词），temperature=0.2
+  - 严格约束「紧扣原方向、严禁引入无关领域」（防主题漂移），**绝不硬编码任何示例主题词**
+  - 解析 JSON 数组；失败/为空一律回退 `[topic]`；结果强制含原 topic 并去重、上限 8
+- 🤖 **C 多维度精读 + E 跨维度去重**（`agents/reader.py`）：
+  - 新增 `_pre_retrieve`：对 4 个核心维度（核心贡献/方法/实验/局限）各 `hybrid_search`，跨维度按 `chunk_id` 合并去重，把真实原文片段（带 section 标注）注入 prompt
+  - `run_for` 改为「预检索注入 + 仍保留 loop 补充检索」，给弱模型喂真材实料而非盲目多轮试探，提升抽取深度与区分度
+- 🤖 **D paper_id 自动注入**（`core/run_context.py` + `tools/rag_query` + `agents/reader.py`）：
+  - `run_context` 新增 `threading.local()` 持有「当前线程精读的 paper_id」（与并行 Reader 隔离），提供 `set/get_reader_paper_id`
+  - Reader `run_for` 进入时登记、`finally` 清除；`rag_query` 在模型**漏传 paper_id** 时自动注入当前精读 pid（记 `rag_query.inject_paper_id` 日志），**不报错打断**，彻底根治跨篇串味
+- 🤖 **F 极轻量规则 rerank**（`rag/retrieve.py`）：
+  - 新增 `_rule_rerank`：RRF 融合后叠加确定性弱加分——核心章节（method/experiment/abstract...）命中 +0.05、query 关键词命中按数量 +0.01/个（上限 0.05）
+  - 加分系数远小于 RRF 量级，**仅在并列/接近时决胜，不颠覆语义主排序**；纯确定性、无模型、无额外 IO；`_hybrid_search_uncached` 先多取再 rerank 后裁剪到 top_k
+- 🤖 **I evidence 为空即打回**（`agents/critic.py`）：
+  - 补齐漏洞：此前 `evidence_spans` 整体为空的卡片反而免检通过。新增 `_empty_evidence_cards`，空证据卡片直接计入 `issues` 并 `passed=False`，suggestion 指向重读
+- 🤖 **J 模板化/雷同检测（告警不击杀）**（`agents/critic.py`）：
+  - 新增 `_detect_templated`：①套话词典（如「本文提出了一种新颖」「取得了显著」「state-of-the-art」等）命中 `core_claim`/`method`；②跨卡 `core_claim` 词集合 Jaccard ≥0.7 判雷同
+  - 命中只 `log_event("critic.template_warn")` + 写入 `critic_feedback.warnings` 与 suggestion，**不改变 passed**（避免误杀真实但简短的结论）
+- 🤖 验证：`python main.py selfcheck` → **仍通过**（11 tools 不变）；针对性单测确认 F rerank 正确上浮核心片段、I 识别空证据卡、J 命中套话告警、D thread-local 注入正常
+
+> ✅ **M5 里程碑达成**：增量幂等入库、动态查询扩展（防漂移）、多维度预检索注入、paper_id 自动注入（防串味）、规则 rerank、空证据打回、模板化告警，全部确定性增强、`selfcheck` 通过。
+
+### 阶段 13：M6 —— Agent Memory（卡片级语义记忆接通，P0）
+
+> 背景：以 Agent 开发的四层记忆（工作/情景/语义/程序）审视项目，发现「横向单任务记忆完整、纵向跨任务沉淀几乎为零」。`memory/__init__.py` 的卡片库读写写好了却零调用——同一篇论文换 topic 就从头精读、重复烧 token。本阶段只做蓝图里的 **P0：卡片级语义记忆接通**（分字段复用 + Critic 质量闸门），不碰 L2 情景召回 / L4 用户画像（P1-P3 暂缓）。详见 CLAUDE.md 第 10 节。
+
+- 👤 决策过程：先讨论「项目是否已有 memory 设计」（结论：有，但「设计了一半、跨任务沉淀留接口未接通」），再定「先做一点」，由助手拍板做 P0 最小闭环
+- 🤖 **memory 模块语义升级**（`memory/__init__.py`）：
+  - 定义 `TOPIC_INVARIANT_FIELDS`（title/authors/year/venue/core_claim/method/method_family/key_results/limitations/evidence_spans）——**topic 无关**字段才可跨任务复用
+  - `remember_card(paper_id, fields)` / `recall_card(paper_id)` 改为收发 dict，写入时**过滤掉 stance_tags/opposes**（topic 相关，防「A topic 立场套到 B topic」）；删除未接通的 `user_profile` 死表
+- 🤖 **Reader 三段式命中**（`agents/reader.py`）：
+  - 黑板命中（同任务）→ 记忆命中（跨任务）→ 完整精读，从快到慢
+  - 新增 `_try_memory`：记忆命中则载入 topic 无关字段建卡，**跳过最贵的 4 维完整精读**，记 `reader.memory_hit`
+  - 新增 `_extract_stance`：命中后针对**新 topic** 单次 `chat_text` 轻量重抽 `stance_tags/opposes`（不开 loop，输入=已存要点+对比维度预检索片段），失败降级为空不阻断
+- 🤖 **写入质量闸门**（`agents/orchestrator.py`）：
+  - 新增 `_remember_cards`：**仅当 Critic 通过后**才把卡片沉淀进 memory（`critic_passed` 标志位控制），杜绝低质卡片被缓存固化——回应「换强模型前先别缓存低质结果」的顾虑
+- 🤖 **配置开关**（`config.py`）：新增 `memory_enabled`（`MEMORY_ENABLED`，默认开），关掉后行为退回纯完整精读
+- 🤖 验证：`python main.py selfcheck` → **仍通过**（11 tools 不变）；针对性单测确认 ①memory 只存 topic 无关字段、stance 不泄漏 ②Reader 记忆命中走复用分支 + 按新 topic 重抽 stance + title 元数据补全
+
+> ✅ **M6 里程碑达成（P0）**：卡片级语义记忆接通，分字段复用 + Critic 质量闸门写入，跨任务命中可跳过主体精读省 token；L2 情景召回 / L4 用户画像按蓝图暂缓。
+
+### 阶段 14：飞书接入增强（A 富卡片 + B1 产物可达）
+
+> 背景：飞书「姿势 1」在 M3 已实现，但只是**纯文本 + 本地路径**——排版差、产物群里点不开、无规模/成本/质量信息。本阶段讨论了三档方案（A 富卡片 / B1 静态托管 / B2 云文档 / C 双向回调）。**C（飞书里发起任务）评估为可行但与本地定位冲突**（需公网可达 + App 鉴权或内网穿透，破坏「本地运行、不起公网服务」红线），故采纳 **A+B1**；C/B2 留作后续可选升级。
+
+- 👤 决策过程：倾向 C → 助手评估 C 硬卡点（飞书事件需公网回调，内网穿透/部署/长连接三条路均破红线或引重依赖）→ 改定 A+B1
+- 👤 需本人完成：飞书群「添加自定义机器人」拿 Webhook，填 `FEISHU_WEBHOOK_URL`；安全设置选自定义关键词 `ScholarStance`
+- 🤖 **A 富文本交互卡片**（`interfaces/feishu.py` 重写）：
+  - `notify_task_done(topic, artifacts, stats)` 推送 `msg_type=interactive` 卡片，展示规模（论文/节点/边/空白）、成本（token/耗时）、质量（Critic 是否通过）
+  - 卡片标题固定含 `ScholarStance` 关键词，兼容自定义机器人关键词安全校验；stats 缺省时优雅降级为「方向 + 按钮」
+  - 产物按钮按文件名映射「查看立场图谱 / 查看综述」，`url` 指向 B1 托管地址
+- 🤖 **B1 产物静态托管**（`interfaces/api.py`）：新增 `GET /artifacts/{name}`，只服务 `storage_dir` 直下文件，`resolve()` + 父目录校验**防目录穿越**；`.md` 纯文本内联、`.html` 浏览器渲染
+- 🤖 **数据接力**（`agents/orchestrator.py`）：`run` 记任务耗时，`_notify_done(bb, critic_passed, elapsed_s)` 从黑板组装 stats（cards/nodes/edges/gaps/usage.total_tokens）
+- 🤖 **配置**（`config.py` + `.env.example`）：新增 `PUBLIC_BASE_URL`（按钮指向的可达地址，默认 localhost；同内网协作填本机 IP）；补全此前遗漏的 `MEMORY_ENABLED` 示例项
+- 🤖 验证：`selfcheck` 通过；卡片构造单测确认 URL 映射、关键词存在、完整 stats 渲染、stats 缺省降级均正确
+
+> ✅ **飞书接入增强达成（A+B1）**：任务完成推送富信息交互卡片，按钮可点开内网托管的图谱/综述产物；双向回调（C）与云文档（B2）按定位暂缓。
+
 ---
 
 ## 你（👤）需要本人完成的配置

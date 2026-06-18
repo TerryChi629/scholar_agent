@@ -181,14 +181,25 @@ def parse_pdf(path: Path) -> dict:
 
 
 def ingest_dir(directory: str) -> dict:
-    """扫描目录下所有 PDF 入库, 返回统计。"""
+    """扫描目录下所有 PDF, 增量入库 (跳过库内已存在的 paper_id), 返回统计。
+
+    增量策略: 以 _paper_id(path) 为身份, 已在向量库存在的论文直接跳过 (不解析、
+    不 embedding), 只处理新增。配合 store.add 的 upsert, 重复 ingest 既不报错也不浪费。
+    """
     store = get_store()
+    existing = set(store.list_papers().keys())
     root = Path(directory).expanduser()
     pdfs = list(root.glob("**/*.pdf"))
     total_chunks = 0
+    added = 0
+    skipped = 0
     papers: list[dict] = []
     for pdf in pdfs:
         pid = _paper_id(pdf)
+        if pid in existing:
+            skipped += 1
+            papers.append({"paper_id": pid, "title": pdf.stem, "status": "skipped"})
+            continue
         parsed = parse_pdf(pdf)
         chunks = [
             Chunk(
@@ -207,7 +218,10 @@ def ingest_dir(directory: str) -> dict:
             for i, (section, page, text) in enumerate(parsed["chunks"])
         ]
         store.add(chunks)
+        existing.add(pid)  # 防同次目录内重复路径再次处理
         total_chunks += len(chunks)
+        added += 1
         papers.append({"paper_id": pid, "title": parsed["title"],
-                       "year": parsed["year"], "chunks": len(chunks)})
-    return {"papers": len(pdfs), "chunks": total_chunks, "detail": papers}
+                       "year": parsed["year"], "chunks": len(chunks), "status": "added"})
+    return {"papers": len(pdfs), "added": added, "skipped": skipped,
+            "chunks": total_chunks, "detail": papers}

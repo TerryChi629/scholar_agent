@@ -11,6 +11,13 @@ from __future__ import annotations
 from agents.base import BaseAgent
 from core.blackboard import Blackboard
 
+# 套话/空泛表述词典 (命中只告警不击杀): 这些短语多为无信息量的模板化措辞。
+_TEMPLATE_PHRASES = (
+    "本文提出了一种新颖", "本文提出一种新颖", "取得了显著", "取得显著效果",
+    "具有重要意义", "大量实验表明", "广泛的实验", "效果显著", "性能优越",
+    "达到了最先进", "state-of-the-art", "在多个数据集上",
+)
+
 
 class CriticAgent(BaseAgent):
     name = "critic"
@@ -35,6 +42,16 @@ class CriticAgent(BaseAgent):
             suggestions.append("对缺失论文重新运行 Reader 精读。")
 
         # —— 2) 引用真实性: evidence_spans 的 quote 能否在该论文内检索到 ——
+        #   2a) 先卡硬伤: evidence_spans 整体为空的卡片直接判不通过 (空数组不能免检,
+        #       否则"无证据"反而比"证据回溯不到"更容易蒙混过关 —— 防幻觉命脉)。
+        empty_ev = self._empty_evidence_cards(bb)
+        if empty_ev:
+            issues.append(
+                f"引用真实性: {len(empty_ev)} 篇卡片 evidence_spans 为空 (无可回溯原文): {empty_ev}"
+            )
+            suggestions.append("对缺证据的论文重新精读, 要求每个结论都附带原文 quote。")
+
+        #   2b) 再查非空但回溯不到的 quote (疑似幻觉)
         unverifiable = self._verify_evidence(bb)
         if unverifiable:
             issues.append(
@@ -55,13 +72,65 @@ class CriticAgent(BaseAgent):
             suggestions.append("运行 Synthesizer 的 build_graph。")
 
         passed = len(issues) == 0
+
+        # —— 4) 模板化/雷同输出检测 (告警, 不击杀): 命中只记入 warnings + 日志,
+        #    不改变 passed —— 套话/雷同是质量提示而非硬伤, 误杀真实但简短的结论得不偿失。
+        warnings = self._detect_templated(bb)
+        if warnings:
+            from core.obs import log_event
+            log_event("critic.template_warn", level="WARNING",
+                      count=len(warnings), samples=warnings[:3])
+            suggestions.append("以下卡片疑似套话/跨篇雷同, 建议重读以提升区分度: "
+                               + "; ".join(warnings[:3]))
+
         verdict = {"passed": passed, "issues": issues, "suggestions": suggestions,
-                   "method": "deterministic"}
+                   "warnings": warnings, "method": "deterministic"}
         bb.critic_feedback.append(verdict)
         if on_step:
             on_step({"round": 0, "type": "final",
-                     "text": f"Critic 判定: {'通过' if passed else '打回'} | issues={len(issues)}"})
+                     "text": f"Critic 判定: {'通过' if passed else '打回'} | "
+                             f"issues={len(issues)} | warnings={len(warnings)}"})
         return passed
+
+    @staticmethod
+    def _empty_evidence_cards(bb: Blackboard) -> list[str]:
+        """列出 evidence_spans 为空 (规整后无任何 quote) 的卡片 paper_id。"""
+        from tools import _spans_to_quotes
+
+        return [pid for pid, card in bb.cards.items()
+                if not _spans_to_quotes(card.evidence_spans)]
+
+    @staticmethod
+    def _detect_templated(bb: Blackboard) -> list[str]:
+        """检测模板化/雷同输出 (确定性启发式, 仅告警):
+        1) core_claim/method 命中套话词典 (空泛表述);
+        2) 跨卡 core_claim 词集合 Jaccard 相似度过高 (疑似雷同空泛)。
+        返回命中卡片的简短描述列表。
+        """
+        warns: list[str] = []
+        cards = list(bb.cards.items())
+
+        # 1) 套话词典命中
+        for pid, card in cards:
+            blob = f"{card.core_claim or ''} {card.method or ''}"
+            for kw in _TEMPLATE_PHRASES:
+                if kw in blob:
+                    warns.append(f"{pid}: 命中套话「{kw}」")
+                    break
+
+        # 2) 跨卡 core_claim 高相似 (雷同)
+        tokenized = {pid: _word_set(card.core_claim or "") for pid, card in cards}
+        for i in range(len(cards)):
+            pi, _ = cards[i]
+            for j in range(i + 1, len(cards)):
+                pj, _ = cards[j]
+                a, b = tokenized[pi], tokenized[pj]
+                if len(a) < 4 or len(b) < 4:
+                    continue
+                jac = len(a & b) / len(a | b) if (a | b) else 0.0
+                if jac >= 0.7:
+                    warns.append(f"{pi}≈{pj}: core_claim 高度雷同 (Jaccard={jac:.2f})")
+        return warns
 
     @staticmethod
     def _verify_evidence(bb: Blackboard, max_per_card: int = 3) -> list[str]:
@@ -92,3 +161,9 @@ def _overlap_ok(quote: str, source: str, ratio: float = 0.5) -> bool:
     if not qw:
         return False
     return len(qw & sw) / len(qw) >= ratio
+
+
+def _word_set(text: str) -> set[str]:
+    """抽取词集合 (中英混合), 供跨卡相似度计算。"""
+    import re
+    return set(re.findall(r"[a-zA-Z0-9\u4e00-\u9fff]+", (text or "").lower()))

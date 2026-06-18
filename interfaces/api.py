@@ -107,3 +107,23 @@ def healthz():
         "uptime_s": round(time.time() - _started_at, 1),
         "chunks": chunks,
     }
+
+
+@app.get("/artifacts/{name}")
+def get_artifact(name: str):
+    """B1: 静态托管 storage 下的产物 (md/html), 供飞书卡片按钮点开。
+
+    仅允许访问 storage_dir 直下文件, 解析真实路径后校验父目录, 防目录穿越。
+    """
+    from fastapi.responses import FileResponse, PlainTextResponse
+    from config import settings
+
+    base = settings.storage_dir.resolve()
+    target = (base / name).resolve()
+    if base not in target.parents or not target.is_file():
+        raise HTTPException(status_code=404, detail="artifact not found")
+    # .md 用纯文本内联展示 (浏览器直接读), .html 用文件响应 (浏览器渲染)
+    if target.suffix.lower() == ".md":
+        return PlainTextResponse(target.read_text(encoding="utf-8"))
+    media = "text/html" if target.suffix.lower() == ".html" else None
+    return FileResponse(str(target), media_type=media)

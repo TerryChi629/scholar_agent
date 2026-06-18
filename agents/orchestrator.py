@@ -26,6 +26,8 @@ class Orchestrator:
     def run(self, bb: Blackboard) -> Blackboard:
         # 工具需要读黑板做确定性计算 (cluster/build_graph), 注册当前任务上下文
         set_active_blackboard(bb)
+        import time
+        _t0 = time.time()
         try:
             # 1) 规划
             bb.plan = [
@@ -50,27 +52,67 @@ class Orchestrator:
             bb.status = Status.REVIEWING.value
             save_checkpoint(bb)
 
+            critic_passed = False
             for _ in range(settings.critic_max_retry + 1):
                 if self.critic.review(bb, self.on_step):
+                    critic_passed = True
                     break
                 # 不通过: 依据反馈定向重调度; 若无可补救动作则不再空转重试
                 if not self._reschedule(bb):
                     break
                 save_checkpoint(bb)
 
+            # 质量闸门: 仅当 Critic 通过时, 才把卡片沉淀进跨任务记忆 (杜绝低质固化)
+            if critic_passed:
+                self._remember_cards(bb)
+
             bb.status = Status.DONE.value
             save_checkpoint(bb)
-            self._notify_done(bb)
+            self._notify_done(bb, critic_passed, round(time.time() - _t0, 1))
             return bb
         finally:
             set_active_blackboard(None)
 
     @staticmethod
-    def _notify_done(bb: Blackboard) -> None:
-        """任务完成后推送飞书 (未配置 webhook 时静默跳过, 不影响主流程)。"""
+    def _remember_cards(bb: Blackboard) -> None:
+        """把通过 Critic 的精读卡片写入跨任务记忆 (仅 topic 无关字段)。
+
+        memory 模块内部只持久化 TOPIC_INVARIANT_FIELDS, stance 不入库 (topic 相关)。
+        写入失败不影响主流程。
+        """
+        if not settings.memory_enabled:
+            return
+        from dataclasses import asdict
+        from memory import remember_card
+        from core.obs import log_event
+        n = 0
+        for pid, card in bb.cards.items():
+            if not card.core_claim:
+                continue
+            try:
+                remember_card(pid, asdict(card))
+                n += 1
+            except Exception as exc:  # noqa: BLE001  记忆写入失败不致命
+                log_event("memory.remember_fail", level="WARNING",
+                          paper_id=pid, error=str(exc))
+        log_event("memory.remember", count=n)
+
+    @staticmethod
+    def _notify_done(bb: Blackboard, critic_passed: bool, elapsed_s: float) -> None:
+        """任务完成后推送飞书富卡片 (未配置 webhook 时静默跳过, 不影响主流程)。"""
         from interfaces.feishu import notify_task_done
+        graph = bb.graph
+        stats = {
+            "cards": len(bb.cards),
+            "nodes": len(graph.nodes) if graph else 0,
+            "edges": len(graph.edges) if graph else 0,
+            "gaps": len(graph.gaps) if graph else 0,
+            "tokens": bb.usage.get("total_tokens", 0),
+            "elapsed_s": elapsed_s,
+            "critic_passed": critic_passed,
+        }
         try:
-            notify_task_done(bb.topic, bb.artifacts)
+            notify_task_done(bb.topic, bb.artifacts, stats)
         except Exception:  # noqa: BLE001  通知失败不应中断任务
             pass
 

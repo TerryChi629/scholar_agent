@@ -13,11 +13,20 @@ def rag_query(query: str, top_k: int = 8, year_min: int = 0, paper_id: str = "")
     """在本地私有库检索相关片段, 支持按年份/指定论文过滤。Retriever/Reader 使用。
 
     paper_id 非空时只在该论文内检索 (Reader 精读单篇时务必传入, 避免跨篇串味)。
+    若处于 Reader 精读上下文且本次未显式传 paper_id, 会自动注入当前精读的 paper_id
+    (兜底防串味: 模型偶尔漏传参时仍锁定目标论文, 而非报错打断)。
     """
     from rag.retrieve import hybrid_search
+    from core.run_context import get_reader_paper_id
 
-    ymin = year_min or None
     pid = paper_id or None
+    if pid is None:
+        injected = get_reader_paper_id()
+        if injected:
+            pid = injected
+            from core.obs import log_event
+            log_event("rag_query.inject_paper_id", paper_id=pid)
+    ymin = year_min or None
     hits = hybrid_search(query, top_k=top_k, year_min=ymin, paper_id=pid)
     return [{"paper_id": h.paper_id, "text": h.text[:600], "score": round(h.score, 3),
              "meta": h.metadata} for h in hits]
@@ -42,11 +51,48 @@ def search_arxiv(query: str, max_results: int = 5) -> list:
 
 @tool
 def expand_query(topic: str) -> list:
-    """把研究方向扩展为同义/相关检索词, 提高召回。
+    """把研究方向扩展为同义/相关检索词, 提高召回。Retriever 使用。
 
-    TODO(Trae): 用 LLM 生成 5-8 个相关 query。
+    用 LLM 围绕给定 topic 动态生成 5-8 个检索查询 (中文表述 + 英文术语 + 核心方法词),
+    严格约束不得偏离原主题、不得引入无关领域词 (防主题漂移)。生成失败或为空时回退
+    为 [topic]; 结果强制包含原 topic 并去重。绝不硬编码任何示例主题词。
     """
-    return [topic]
+    topic = (topic or "").strip()
+    if not topic:
+        return []
+    from core.llm import get_llm
+    from core.obs import log_event
+
+    sys = (
+        "你是学术检索查询扩展助手。针对用户给定的研究方向, 生成 5-8 个用于本地论文库"
+        "检索的查询词/短语, 要求: 覆盖中文表述、对应英文术语、核心方法名; 每条都必须"
+        "紧扣原方向, 严禁引入与原方向无关的领域或泛化主题 (防止主题漂移)。"
+        "只输出一个 JSON 字符串数组, 不要任何解释。"
+    )
+    try:
+        text = get_llm().chat_text(
+            [{"role": "system", "content": sys},
+             {"role": "user", "content": f"研究方向: {topic}"}],
+            temperature=0.2,
+        )
+        import json as _json
+        import re as _re
+        m = _re.search(r"\[.*\]", text, _re.DOTALL)
+        arr = _json.loads(m.group(0)) if m else []
+        queries = [str(q).strip() for q in arr if isinstance(q, (str, int, float)) and str(q).strip()]
+    except Exception as exc:  # noqa: BLE001  扩展失败不应阻断检索, 降级为原 topic
+        log_event("expand_query.fallback", level="WARNING", error=str(exc))
+        queries = []
+
+    # 强制包含原 topic, 去重保序, 控制上限。
+    out: list[str] = []
+    seen: set[str] = set()
+    for q in [topic, *queries]:
+        key = q.lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(q)
+    return out[:8] if len(out) > 1 else [topic]
 
 
 def _slug(text: str) -> str:
