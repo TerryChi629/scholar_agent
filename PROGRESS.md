@@ -358,6 +358,23 @@
 
 ---
 
+### 阶段 22：会话记录持久化 + token 追踪 + 两级入口前端（深色霓虹）
+
+> 背景：用户要「多一些功能：把交互过的会话记录下来 + 记录 token 消耗；前端做成两级——先选入口（论文综述 React / ChatAgent），做好标识，做酷炫些」。讨论定调（AskUserQuestion 全选推荐项）：入口形态=全屏启动页；会话历史=ChatAgent 内侧栏；视觉风格=深色霓虹科技感。
+
+- 👤 决策：①两级入口=全屏 Landing 选入口 + 第二层工作区；②会话历史=ChatAgent 内置侧栏；③视觉=深色霓虹；④token 显示=侧栏累计统计 + 每轮徽章
+- 🤖 **会话记录持久化 + token 追踪（`chat/session.py`）**：`chat_sessions` 表新增 `title`（首条 user 问题截断 40 字）+ `total_tokens`（累计）；`chat_turns` 表新增 `tokens`（每轮 LLM 消耗）；`_ensure_column` 兼容旧库（PRAGMA 查列缺失则 ALTER TABLE 补列，旧会话显示「(未命名会话)」+0 token）；`append_turn(..., tokens=0)` UPSERT 累加 total_tokens + 取首问为 title；新增 `list_sessions(limit)`（按 updated_at 倒序，含标题/轮数/累计 token）/ `get_session(id)`（完整对话记录含每轮 token）
+- 🤖 **token 来源链路（`chat/agent.py`）**：`synthesize()` 已返回 usage（prompt/completion/total_tokens）→ `ChatResult.usage` 透传 → `append_turn("assistant", ..., tokens=usage.total_tokens)` 落库 → `/chat/sessions` 聚合
+- 🤖 **会话查询接口（`interfaces/api.py`）**：新增 `GET /chat/sessions`（返回 total/total_tokens 聚合/items）+ `GET /chat/sessions/{id}`（完整记录，空则 404）
+- 🤖 **两级入口前端（`web/index.html` 整页重写，深色霓虹）**：第一层 `#landing` 全屏选入口（双卡片：research 青蓝 RESEARCH / chat 紫红 CHATAGENT，渐变边框 hover 辉光、icon、tag 标识）；第二层 `#ws-research`（tab 导航：任务台/产物/库内问答/PDF入库/arXiv占位）/ `#ws-chat`（侧栏 + 对话流）；左上角「← 入口」返回 Landing
+- 🤖 **ChatAgent 侧栏（`web/index.html`）**：固定 280px，顶部 token 统计盒（累计 total_tokens 大字 + 会话数）+「+ 新会话」；下方会话列表（标题+轮数+token，点击 `openSession` 回看历史）；`renderHistoryBot` 渲染历史正文+token（无证据卡片，历史只存 answer 文本）；实时 `renderBotTurn` 含证据/引用/记忆 + token 徽章
+- 🤖 **深色霓虹主题（`web/index.html`）**：CSS 变量 --cyan/--blue/--purple/--magenta；body::before 三层 radial-gradient 辉光 + body::after 网格 mask；玻璃拟态卡片（backdrop-filter blur）；渐变文字（-webkit-background-clip:text）；hover 辉光 + translateY
+- 🤖 验证（GLM low 档，端口 8011）：后端 curl 全验证——chat turn token=1987 落库、`/chat/sessions` 聚合 total_tokens=1987 + 新会话 title 正确取首问、`/chat/sessions/{id}` 详情正确；旧会话显示「(未命名会话)」+0 token（符合迁移预期）；前端浏览器验证——双入口切换、侧栏 token 统计盒(1,987)+会话列表、会话回看（Mermaid 图/引用渲染正常）、入口返回导航全部通过
+
+> ✅ 达成：会话全程持久化可回看，token 消耗按会话累计 + 按轮展示；前端升级为两级入口（论文综述 / ChatAgent 双工作区，做好视觉标识），深色霓虹科技感。
+
+---
+
 ## 你（👤）需要本人完成的配置
 
 ### 1. 填入 LLM + Embedding API key（必需）

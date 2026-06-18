@@ -118,6 +118,28 @@ def chat(req: ChatRequest):
     return res.to_dict()
 
 
+@app.get("/chat/sessions")
+def list_chat_sessions(limit: int = Query(50, ge=1, le=200)):
+    """列出历史会话 (标题/轮数/累计 token), 供前端历史侧栏。"""
+    from chat import session as session_mod
+    items = session_mod.list_sessions(limit=limit)
+    return {
+        "total": len(items),
+        "total_tokens": sum(i["total_tokens"] for i in items),
+        "items": items,
+    }
+
+
+@app.get("/chat/sessions/{session_id}")
+def get_chat_session(session_id: str):
+    """返回单个会话完整对话记录 (含每轮 token), 供回看历史。"""
+    from chat import session as session_mod
+    data = session_mod.get_session(session_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="session not found")
+    return data
+
+
 @app.get("/healthz")
 def healthz():
     """健康检查: 进程存活 + 向量库可达 (供探活/负载均衡)。"""

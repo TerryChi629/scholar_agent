@@ -51,7 +51,8 @@ class ChatAgent:
         # 短期会话记忆: 记录本轮问答, 超窗旧轮压成滚动摘要 (指代消解/追问用)。
         if session_id:
             session_mod.append_turn(session_id, "user", question)
-            session_mod.append_turn(session_id, "assistant", result.answer)
+            session_mod.append_turn(session_id, "assistant", result.answer,
+                                    tokens=(result.usage or {}).get("total_tokens", 0))
             session_mod.maybe_summarize(session_id)
         return result
 

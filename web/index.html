@@ -6,113 +6,195 @@
 <title>ScholarStance · 科研助手控制台</title>
 <style>
   :root{
-    --bg:#f6f8fa; --panel:#ffffff; --border:#e1e4e8; --text:#24292f;
-    --muted:#6a737d; --accent:#0969da; --accent-soft:#ddf4ff;
-    --green:#1a7f37; --red:#cf222e; --amber:#9a6700; --shadow:0 1px 3px rgba(27,31,36,.08);
+    --bg:#070b16; --bg2:#0a1020; --panel:rgba(255,255,255,.04); --panel-solid:#0e1424;
+    --border:rgba(255,255,255,.10); --border-soft:rgba(255,255,255,.06);
+    --text:#e6ecf5; --muted:#8a98b3; --dim:#5f6c85;
+    --cyan:#22d3ee; --blue:#3b82f6; --purple:#a855f7; --magenta:#ec4899;
+    --green:#34d399; --red:#fb7185; --amber:#fbbf24;
+    --glow-cyan:0 0 24px rgba(34,211,238,.35); --glow-purple:0 0 24px rgba(168,85,247,.35);
   }
   *{box-sizing:border-box}
+  html,body{height:100%}
   body{margin:0;background:var(--bg);color:var(--text);
        font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Helvetica,Arial,sans-serif;
-       font-size:14px;line-height:1.6}
-  header{background:var(--panel);border-bottom:1px solid var(--border);
-         padding:14px 28px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:10}
-  header h1{font-size:18px;margin:0;font-weight:600}
-  header .badge{font-size:12px;color:var(--muted);background:var(--bg);
-                padding:2px 10px;border-radius:20px;border:1px solid var(--border)}
-  header .health{margin-left:auto;font-size:12px;color:var(--muted)}
-  .health .dot{display:inline-block;width:8px;height:8px;border-radius:50%;
-               background:#d0d7de;margin-right:5px;vertical-align:middle}
-  .health.ok .dot{background:var(--green)} .health.bad .dot{background:var(--red)}
+       font-size:14px;line-height:1.6;overflow-x:hidden}
+  /* 背景辉光 */
+  body::before{content:'';position:fixed;inset:0;z-index:-2;
+    background:radial-gradient(1100px 600px at 12% -8%,rgba(34,211,238,.16),transparent 60%),
+               radial-gradient(1000px 620px at 92% 4%,rgba(168,85,247,.16),transparent 60%),
+               radial-gradient(900px 700px at 50% 115%,rgba(59,130,246,.12),transparent 60%),
+               var(--bg)}
+  body::after{content:'';position:fixed;inset:0;z-index:-1;opacity:.5;
+    background-image:linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px),
+                     linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px);
+    background-size:44px 44px;mask-image:radial-gradient(ellipse 80% 70% at 50% 40%,#000,transparent 90%)}
 
-  nav{display:flex;gap:4px;padding:0 28px;background:var(--panel);border-bottom:1px solid var(--border)}
-  nav button{background:none;border:none;padding:12px 16px;font-size:14px;color:var(--muted);
-             cursor:pointer;border-bottom:2px solid transparent;font-family:inherit}
+  a{color:var(--cyan)}
+  code{background:rgba(255,255,255,.06);padding:1px 6px;border-radius:5px;font-size:12px;color:#c7d2fe}
+  .hint{color:var(--muted);font-size:12px;margin-top:8px}
+  .empty{color:var(--dim);text-align:center;padding:32px;font-size:13px}
+
+  /* ===== 启动页 (两级入口第一层) ===== */
+  #landing{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 20px;animation:fadeIn .5s ease}
+  #landing .brand{text-align:center;margin-bottom:48px}
+  #landing .brand .logo{font-size:13px;letter-spacing:.42em;color:var(--cyan);text-transform:uppercase;margin-bottom:14px;text-shadow:var(--glow-cyan)}
+  #landing .brand h1{font-size:54px;margin:0;font-weight:800;letter-spacing:-1px;
+    background:linear-gradient(92deg,#fff 10%,var(--cyan) 45%,var(--purple) 90%);
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  #landing .brand p{color:var(--muted);margin:14px 0 0;font-size:15px}
+  .entries{display:grid;grid-template-columns:repeat(2,minmax(280px,360px));gap:26px;width:100%;max-width:760px}
+  .entry{position:relative;cursor:pointer;border:1px solid var(--border);border-radius:20px;padding:34px 28px;
+    background:linear-gradient(165deg,rgba(255,255,255,.06),rgba(255,255,255,.015));
+    backdrop-filter:blur(14px);overflow:hidden;transition:transform .3s cubic-bezier(.2,.8,.2,1),box-shadow .3s,border-color .3s;min-height:248px;display:flex;flex-direction:column}
+  .entry::before{content:'';position:absolute;inset:-1px;border-radius:20px;padding:1px;opacity:0;transition:opacity .3s;
+    background:linear-gradient(135deg,var(--g1),var(--g2));-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude}
+  .entry:hover{transform:translateY(-8px)}
+  .entry:hover::before{opacity:1}
+  .entry.research{--g1:var(--cyan);--g2:var(--blue)}
+  .entry.research:hover{box-shadow:0 18px 50px rgba(34,211,238,.22),var(--glow-cyan)}
+  .entry.chat{--g1:var(--purple);--g2:var(--magenta)}
+  .entry.chat:hover{box-shadow:0 18px 50px rgba(168,85,247,.22),var(--glow-purple)}
+  .entry .ic{width:56px;height:56px;border-radius:15px;display:flex;align-items:center;justify-content:center;font-size:27px;margin-bottom:20px}
+  .entry.research .ic{background:rgba(34,211,238,.14);box-shadow:var(--glow-cyan)}
+  .entry.chat .ic{background:rgba(168,85,247,.14);box-shadow:var(--glow-purple)}
+  .entry .tag{position:absolute;top:20px;right:20px;font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px;letter-spacing:.04em}
+  .entry.research .tag{color:var(--cyan);background:rgba(34,211,238,.12);border:1px solid rgba(34,211,238,.3)}
+  .entry.chat .tag{color:var(--purple);background:rgba(168,85,247,.12);border:1px solid rgba(168,85,247,.3)}
+  .entry h2{font-size:21px;margin:0 0 8px;font-weight:700}
+  .entry p{color:var(--muted);margin:0;font-size:13px;flex:1}
+  .entry .go{margin-top:18px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px}
+  .entry.research .go{color:var(--cyan)} .entry.chat .go{color:var(--purple)}
+  .entry .go .arr{transition:transform .3s} .entry:hover .go .arr{transform:translateX(5px)}
+  #landing .foot{margin-top:40px;color:var(--dim);font-size:12px;display:flex;gap:18px;align-items:center}
+  #landing .foot .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--dim);margin-right:6px;vertical-align:middle}
+  #landing .foot .health.ok .dot{background:var(--green);box-shadow:0 0 8px var(--green)}
+  #landing .foot .health.bad .dot{background:var(--red)}
+
+  /* ===== 工作区通用 ===== */
+  .workspace{display:none;min-height:100vh;flex-direction:column;animation:fadeIn .4s ease}
+  .workspace.active{display:flex}
+  .topbar{display:flex;align-items:center;gap:14px;padding:14px 26px;border-bottom:1px solid var(--border-soft);
+    background:rgba(8,12,22,.72);backdrop-filter:blur(12px);position:sticky;top:0;z-index:20}
+  .topbar .back{display:flex;align-items:center;gap:7px;cursor:pointer;color:var(--muted);font-size:13px;
+    padding:7px 13px;border:1px solid var(--border);border-radius:9px;background:var(--panel);transition:.2s}
+  .topbar .back:hover{color:var(--text);border-color:var(--cyan)}
+  .topbar .wtitle{display:flex;align-items:center;gap:10px;font-weight:700;font-size:16px}
+  .topbar .wbadge{font-size:11px;font-weight:600;padding:3px 11px;border-radius:20px}
+  .ws-research .wbadge{color:var(--cyan);background:rgba(34,211,238,.12);border:1px solid rgba(34,211,238,.3)}
+  .ws-chat .wbadge{color:var(--purple);background:rgba(168,85,247,.12);border:1px solid rgba(168,85,247,.3)}
+  .topbar .health{margin-left:auto;font-size:12px;color:var(--muted)}
+  .topbar .health .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--dim);margin-right:6px;vertical-align:middle}
+  .topbar .health.ok .dot{background:var(--green);box-shadow:0 0 8px var(--green)} .topbar .health.bad .dot{background:var(--red)}
+
+  nav{display:flex;gap:4px;padding:0 26px;border-bottom:1px solid var(--border-soft);background:rgba(8,12,22,.4)}
+  nav button{background:none;border:none;padding:13px 16px;font-size:14px;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;font-family:inherit}
   nav button:hover{color:var(--text)}
-  nav button.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:500}
+  nav button.active{color:var(--cyan);border-bottom-color:var(--cyan);font-weight:600}
 
-  main{max-width:1080px;margin:0 auto;padding:28px}
+  main{max-width:1080px;width:100%;margin:0 auto;padding:26px}
   .tab{display:none} .tab.active{display:block}
-  .panel{background:var(--panel);border:1px solid var(--border);border-radius:8px;
-         padding:20px;margin-bottom:20px;box-shadow:var(--shadow)}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px;margin-bottom:20px;backdrop-filter:blur(10px)}
   .panel h2{font-size:15px;margin:0 0 14px;font-weight:600}
   .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-  input[type=text]{flex:1;min-width:200px;padding:9px 12px;border:1px solid var(--border);
-                   border-radius:6px;font-size:14px;font-family:inherit;background:#fff}
-  input[type=text]:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
-  button.btn{background:var(--accent);color:#fff;border:none;padding:9px 18px;border-radius:6px;
-             font-size:14px;cursor:pointer;font-family:inherit;white-space:nowrap}
-  button.btn:hover{background:#0860ca} button.btn:disabled{opacity:.5;cursor:not-allowed}
-  button.btn.ghost{background:#fff;color:var(--text);border:1px solid var(--border)}
-  button.btn.ghost:hover{background:var(--bg)}
+  input[type=text],select{flex:1;min-width:200px;padding:10px 13px;border:1px solid var(--border);border-radius:9px;font-size:14px;font-family:inherit;background:rgba(0,0,0,.25);color:var(--text)}
+  input[type=text]::placeholder{color:var(--dim)}
+  input[type=text]:focus,select:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 0 3px rgba(34,211,238,.18)}
+  button.btn{background:linear-gradient(120deg,var(--cyan),var(--blue));color:#04121a;border:none;padding:10px 20px;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap;transition:.2s}
+  button.btn:hover{box-shadow:var(--glow-cyan);transform:translateY(-1px)} button.btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:none;transform:none}
+  button.btn.purple{background:linear-gradient(120deg,var(--purple),var(--magenta));color:#fff}
+  button.btn.purple:hover{box-shadow:var(--glow-purple)}
+  button.btn.ghost{background:var(--panel);color:var(--text);border:1px solid var(--border)}
+  button.btn.ghost:hover{background:rgba(255,255,255,.08);border-color:var(--cyan);box-shadow:none;transform:none}
 
   table{width:100%;border-collapse:collapse;font-size:13px}
-  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--border)}
+  th,td{text-align:left;padding:10px;border-bottom:1px solid var(--border-soft)}
   th{color:var(--muted);font-weight:500} tr:last-child td{border-bottom:none}
-  tr.clickable{cursor:pointer} tr.clickable:hover{background:var(--bg)}
-
-  .status{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12px;font-weight:500}
-  .status.done{background:#dafbe1;color:var(--green)}
-  .status.failed{background:#ffebe9;color:var(--red)}
-  .status.running{background:#fff8c5;color:var(--amber)}
+  tr.clickable{cursor:pointer} tr.clickable:hover{background:rgba(255,255,255,.04)}
+  .status{display:inline-block;padding:2px 10px;border-radius:20px;font-size:12px;font-weight:600}
+  .status.done{background:rgba(52,211,153,.14);color:var(--green)}
+  .status.failed{background:rgba(251,113,133,.14);color:var(--red)}
+  .status.running{background:rgba(251,191,36,.14);color:var(--amber)}
 
   .stats{display:flex;gap:24px;flex-wrap:wrap;margin-top:8px}
   .stat{display:flex;flex-direction:column}
-  .stat .num{font-size:22px;font-weight:600} .stat .lbl{font-size:12px;color:var(--muted)}
+  .stat .num{font-size:24px;font-weight:700;background:linear-gradient(120deg,#fff,var(--cyan));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .stat .lbl{font-size:12px;color:var(--muted)}
 
-  .hit{border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:10px;background:#fff}
+  .hit{border:1px solid var(--border);border-radius:11px;padding:13px;margin-bottom:10px;background:var(--panel)}
   .hit .meta{font-size:12px;color:var(--muted);margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:8px}
   .hit .meta .title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .hit .meta .rel{display:flex;align-items:center;gap:6px;flex-shrink:0}
-  .hit .rank{display:inline-block;min-width:20px;text-align:center;padding:1px 6px;border-radius:10px;background:var(--accent);color:#fff;font-weight:600}
-  .hit .bar{width:60px;height:6px;border-radius:3px;background:#e6e9ee;overflow:hidden}
-  .hit .bar i{display:block;height:100%;background:var(--accent)}
-  .hit .txt{font-size:13px;color:#333;max-height:120px;overflow:auto}
+  .hit .rank{display:inline-block;min-width:20px;text-align:center;padding:1px 7px;border-radius:10px;background:linear-gradient(120deg,var(--cyan),var(--blue));color:#04121a;font-weight:700}
+  .hit .bar{width:60px;height:6px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden}
+  .hit .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--cyan),var(--purple))}
+  .hit .txt{font-size:13px;color:var(--muted);max-height:120px;overflow:auto}
 
-  iframe.viewer{width:100%;height:78vh;border:1px solid var(--border);border-radius:8px;background:#fff}
-  .empty{color:var(--muted);text-align:center;padding:32px;font-size:13px}
-  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#24292f;color:#fff;
-         padding:10px 20px;border-radius:6px;font-size:13px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:99}
+  iframe.viewer{width:100%;height:74vh;border:1px solid var(--border);border-radius:12px;background:#fff}
+  .soon{display:inline-block;font-size:11px;background:rgba(34,211,238,.12);color:var(--cyan);padding:1px 8px;border-radius:10px;margin-left:6px;vertical-align:middle}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#0e1424;border:1px solid var(--border);color:#fff;padding:11px 20px;border-radius:10px;font-size:13px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:99;box-shadow:0 8px 30px rgba(0,0,0,.5)}
   .toast.show{opacity:1}
-  .soon{display:inline-block;font-size:11px;background:var(--accent-soft);color:var(--accent);
-        padding:1px 8px;border-radius:10px;margin-left:6px;vertical-align:middle}
-  code{background:var(--bg);padding:1px 5px;border-radius:4px;font-size:12px}
-  .hint{color:var(--muted);font-size:12px;margin-top:8px}
 
   /* —— 智能问答: 合成答案 + 引用 —— */
-  .answer{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:22px 24px;box-shadow:var(--shadow);margin-bottom:16px}
-  .answer h1,.answer h2,.answer h3{font-size:16px;margin:18px 0 8px;font-weight:600}
+  .answer{background:var(--panel);border:1px solid var(--border);border-radius:13px;padding:20px 22px;backdrop-filter:blur(10px);margin-bottom:14px}
+  .answer h1,.answer h2,.answer h3{font-size:16px;margin:18px 0 8px;font-weight:600;color:#fff}
   .answer h1:first-child,.answer h2:first-child{margin-top:0}
   .answer p{margin:8px 0}
   .answer ul,.answer ol{margin:8px 0;padding-left:22px}
   .answer li{margin:4px 0}
-  .answer pre{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:12px;overflow:auto}
-  .answer .mermaid{background:#fff;border:1px solid var(--border);border-radius:6px;padding:14px;margin:12px 0;text-align:center}
-  .answer .cite{display:inline-block;min-width:18px;text-align:center;background:var(--accent-soft);color:var(--accent);
-                font-size:12px;font-weight:600;padding:0 6px;border-radius:10px;cursor:pointer;vertical-align:baseline;margin:0 1px}
-  .answer .cite:hover{background:var(--accent);color:#fff}
-  .refs{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:18px 22px;box-shadow:var(--shadow);margin-bottom:16px}
+  .answer pre{background:rgba(0,0,0,.4);border:1px solid var(--border);border-radius:8px;padding:12px;overflow:auto}
+  .answer .mermaid{background:#fff;border:1px solid var(--border);border-radius:8px;padding:14px;margin:12px 0;text-align:center}
+  .answer .cite{display:inline-block;min-width:18px;text-align:center;background:rgba(34,211,238,.16);color:var(--cyan);font-size:12px;font-weight:700;padding:0 6px;border-radius:10px;cursor:pointer;vertical-align:baseline;margin:0 1px}
+  .answer .cite:hover{background:var(--cyan);color:#04121a}
+  .refs{background:var(--panel);border:1px solid var(--border);border-radius:13px;padding:16px 20px;backdrop-filter:blur(10px);margin-bottom:14px}
   .refs h3{font-size:14px;margin:0 0 12px;font-weight:600}
-  .ref{border-left:3px solid var(--border);padding:8px 12px;margin-bottom:10px;background:var(--bg);border-radius:0 6px 6px 0}
-  .ref.hl{border-left-color:var(--accent);background:var(--accent-soft)}
+  .ref{border-left:3px solid var(--border);padding:8px 12px;margin-bottom:10px;background:rgba(0,0,0,.2);border-radius:0 8px 8px 0}
+  .ref.hl{border-left-color:var(--cyan);background:rgba(34,211,238,.1)}
   .ref .rmeta{font-size:12px;color:var(--muted);margin-bottom:4px}
-  .ref .rq{font-size:13px;color:#333;max-height:0;overflow:hidden;transition:max-height .25s}
+  .ref .rq{font-size:13px;color:var(--text);max-height:0;overflow:hidden;transition:max-height .25s}
   .ref.open .rq{max-height:400px;overflow:auto}
-  .ref .rtoggle{cursor:pointer;color:var(--accent);font-size:12px}
+  .ref .rtoggle{cursor:pointer;color:var(--cyan);font-size:12px}
   .mem{font-size:12px;color:var(--muted);margin-top:6px}
-  .mem .tag{background:var(--accent-soft);color:var(--accent);padding:1px 7px;border-radius:10px;margin-right:6px}
+  .mem .tag{background:rgba(168,85,247,.16);color:#d8b4fe;padding:1px 7px;border-radius:10px;margin-right:6px}
 
-  /* —— ChatAgent 对话流 —— */
-  .thread{margin-bottom:16px}
-  .turn{margin-bottom:16px}
+  /* —— ChatAgent 对话流布局: 侧栏 + 主区 —— */
+  .chat-layout{display:flex;height:calc(100vh - 58px);overflow:hidden}
+  .chat-side{width:280px;flex-shrink:0;border-right:1px solid var(--border-soft);background:rgba(8,12,22,.5);display:flex;flex-direction:column}
+  .chat-side .side-head{padding:16px 16px 12px}
+  .chat-side .side-head .tokbox{border:1px solid var(--border);border-radius:11px;padding:12px 14px;margin-bottom:12px;
+    background:linear-gradient(150deg,rgba(168,85,247,.12),rgba(236,72,153,.05))}
+  .chat-side .side-head .tokbox .lbl{font-size:11px;color:var(--muted);letter-spacing:.05em}
+  .chat-side .side-head .tokbox .big{font-size:24px;font-weight:800;background:linear-gradient(120deg,#fff,var(--purple));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .chat-side .side-head .tokbox .sub{font-size:11px;color:var(--dim)}
+  .chat-side .side-list{flex:1;overflow-y:auto;padding:0 10px 12px}
+  .chat-side .side-list .lstitle{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.1em;padding:8px 6px 6px}
+  .sess{padding:10px 12px;border-radius:10px;cursor:pointer;margin-bottom:4px;border:1px solid transparent;transition:.15s}
+  .sess:hover{background:rgba(255,255,255,.05)}
+  .sess.active{background:rgba(168,85,247,.14);border-color:rgba(168,85,247,.34)}
+  .sess .t{font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+  .sess .m{font-size:11px;color:var(--dim);margin-top:3px;display:flex;gap:10px}
+  .sess .m .tk{color:var(--purple)}
+  .chat-main{flex:1;display:flex;flex-direction:column;min-width:0}
+  .chat-scroll{flex:1;overflow-y:auto;padding:24px 28px}
+  .chat-scroll .intro{max-width:680px;margin:6vh auto 0;text-align:center;color:var(--muted)}
+  .chat-scroll .intro .big{font-size:26px;font-weight:800;color:#fff;margin-bottom:10px;background:linear-gradient(120deg,#fff,var(--purple));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .thread{max-width:820px;margin:0 auto}
+  .turn{margin-bottom:18px}
   .turn.user{display:flex;justify-content:flex-end}
-  .turn.user .bubble{background:var(--accent);color:#fff;padding:9px 14px;border-radius:14px 14px 2px 14px;max-width:78%;white-space:pre-wrap}
-  .turn.bot .who{font-size:12px;color:var(--muted);margin-bottom:6px;display:flex;align-items:center;gap:6px}
-  .turn.bot .who .ai{background:var(--accent-soft);color:var(--accent);font-weight:600;padding:1px 8px;border-radius:10px}
-  .turn.bot .who .intent{font-size:11px;color:var(--muted)}
-  .chat-composer{position:sticky;bottom:0;margin-bottom:0}
+  .turn.user .bubble{background:linear-gradient(120deg,var(--purple),var(--magenta));color:#fff;padding:10px 15px;border-radius:15px 15px 3px 15px;max-width:78%;white-space:pre-wrap;box-shadow:0 4px 18px rgba(168,85,247,.25)}
+  .turn.bot .who{font-size:12px;color:var(--muted);margin-bottom:7px;display:flex;align-items:center;gap:8px}
+  .turn.bot .who .ai{background:rgba(168,85,247,.16);color:#d8b4fe;font-weight:700;padding:2px 9px;border-radius:10px;display:flex;align-items:center;gap:5px}
+  .turn.bot .who .ai::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--magenta);box-shadow:0 0 8px var(--magenta)}
+  .turn.bot .who .intent{font-size:11px;color:var(--dim)}
+  .turn.bot .who .tok{font-size:11px;color:var(--purple);margin-left:auto}
+  .chat-composer{border-top:1px solid var(--border-soft);background:rgba(8,12,22,.78);backdrop-filter:blur(12px);padding:16px 28px}
+  .chat-composer .inner{max-width:820px;margin:0 auto}
   .typing{color:var(--muted);font-size:13px;padding:4px 0}
   .typing::after{content:'';animation:dots 1.2s steps(4,end) infinite}
   @keyframes dots{0%{content:''}25%{content:'·'}50%{content:'··'}75%{content:'···'}}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:6px}
+  ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.2)}
 </style>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"/>
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
@@ -121,117 +203,161 @@
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
 </head>
 <body>
-<header>
-  <h1>ScholarStance</h1>
-  <span class="badge">本地论文库 · 多 Agent 科研助手</span>
-  <span id="health" class="health"><span class="dot"></span><span id="health-txt">检测中…</span></span>
-</header>
 
-<nav>
-  <button data-tab="tasks" class="active">任务台</button>
-  <button data-tab="artifacts">产物</button>
-  <button data-tab="chat">智能问答</button>
-  <button data-tab="ask">库内问答</button>
-  <button data-tab="ingest">PDF 入库</button>
-  <button data-tab="arxiv">arXiv 检索<span class="soon">即将上线</span></button>
-</nav>
+<!-- ===== 第一层: 启动页 (选入口) ===== -->
+<div id="landing">
+  <div class="brand">
+    <div class="logo">ScholarStance</div>
+    <h1>科研助手控制台</h1>
+    <p>本地论文库 · 多 Agent 驱动 · 选择一个工作区开始</p>
+  </div>
+  <div class="entries">
+    <div class="entry research" id="enter-research">
+      <span class="tag">RESEARCH</span>
+      <div class="ic">🗺️</div>
+      <h2>论文综述图谱</h2>
+      <p>输入研究方向，多 Agent 自动检索、精读、建立立场图谱，产出带真实引用的综述初稿。</p>
+      <div class="go">进入工作区 <span class="arr">→</span></div>
+    </div>
+    <div class="entry chat" id="enter-chat">
+      <span class="tag">CHATAGENT</span>
+      <div class="ic">💬</div>
+      <h2>ChatAgent 智能问答</h2>
+      <p>多轮对话式研究助手，合成式 RAG 回答（公式 / 图 / 引用），长短期记忆，会话可回看。</p>
+      <div class="go">进入工作区 <span class="arr">→</span></div>
+    </div>
+  </div>
+  <div class="foot">
+    <span id="health" class="health"><span class="dot"></span><span id="health-txt">检测中…</span></span>
+    <span>· 本地运行，数据不出机</span>
+  </div>
+</div>
 
-<main>
-  <!-- 任务台 -->
-  <section id="tab-tasks" class="tab active">
-    <div class="panel">
-      <h2>发起立场图谱任务</h2>
-      <div class="row">
-        <input type="text" id="topic" placeholder="输入研究方向，如：生成式推荐系统"/>
-        <button class="btn" id="btn-map">发起任务</button>
+<!-- ===== 第二层 A: 论文综述工作区 ===== -->
+<div id="ws-research" class="workspace ws-research">
+  <div class="topbar">
+    <div class="back" data-home>← 入口</div>
+    <div class="wtitle">🗺️ 论文综述图谱 <span class="wbadge">RESEARCH</span></div>
+    <span class="health" id="health-r"><span class="dot"></span><span id="health-r-txt">检测中…</span></span>
+  </div>
+  <nav>
+    <button data-tab="tasks" class="active">任务台</button>
+    <button data-tab="artifacts">产物</button>
+    <button data-tab="ask">库内问答</button>
+    <button data-tab="ingest">PDF 入库</button>
+    <button data-tab="arxiv">arXiv 检索<span class="soon">即将上线</span></button>
+  </nav>
+  <main>
+    <section id="tab-tasks" class="tab active">
+      <div class="panel">
+        <h2>发起立场图谱任务</h2>
+        <div class="row">
+          <input type="text" id="topic" placeholder="输入研究方向，如：生成式推荐系统"/>
+          <button class="btn" id="btn-map">发起任务</button>
+        </div>
+        <div class="hint">任务异步执行，下方列表会实时刷新状态；点击任意任务查看详情与产物。</div>
       </div>
-      <div class="hint">任务异步执行，下方列表会实时刷新状态；点击任意任务查看详情与产物。</div>
-    </div>
-    <div class="panel">
-      <h2>任务详情</h2>
-      <div id="task-detail"><div class="empty">未选择任务</div></div>
-    </div>
-    <div class="panel">
-      <div class="row" style="justify-content:space-between">
-        <h2 style="margin:0">历史任务</h2>
-        <button class="btn ghost" id="btn-refresh">刷新</button>
+      <div class="panel">
+        <h2>任务详情</h2>
+        <div id="task-detail"><div class="empty">未选择任务</div></div>
       </div>
-      <div id="task-list" style="margin-top:12px"><div class="empty">加载中…</div></div>
-    </div>
-  </section>
-
-  <!-- 产物 -->
-  <section id="tab-artifacts" class="tab">
-    <div class="panel">
-      <h2>查看产物</h2>
-      <div class="row">
-        <select id="artifact-select" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:6px;font-size:14px"></select>
-        <button class="btn ghost" id="btn-open-new">新标签打开</button>
+      <div class="panel">
+        <div class="row" style="justify-content:space-between">
+          <h2 style="margin:0">历史任务</h2>
+          <button class="btn ghost" id="btn-refresh">刷新</button>
+        </div>
+        <div id="task-list" style="margin-top:12px"><div class="empty">加载中…</div></div>
       </div>
-      <div class="hint">选择某个已完成任务的综述 / 立场图谱，在下方直接预览。</div>
-    </div>
-    <iframe id="viewer" class="viewer" title="产物预览"></iframe>
-  </section>
+    </section>
 
-  <!-- 智能问答 (ChatAgent · 合成式 RAG + 长短期记忆) -->
-  <section id="tab-chat" class="tab">
-    <div class="panel">
-      <div class="row" style="justify-content:space-between;align-items:flex-start">
-        <div>
-          <h2 style="margin:0">ChatAgent · 智能问答</h2>
-          <div class="hint" style="margin-top:4px">
-            多轮对话式研究助手：检索库内论文证据后合成结构化总结（含 LaTeX 公式 / Mermaid 图），结论锚定 [n] 引用可展开原文。
-            <br/>记忆：<b>短期</b>记住本轮会话上下文（支持追问指代），<b>长期</b>记住你的偏好与规则。
+    <section id="tab-artifacts" class="tab">
+      <div class="panel">
+        <h2>查看产物</h2>
+        <div class="row">
+          <select id="artifact-select"></select>
+          <button class="btn ghost" id="btn-open-new">新标签打开</button>
+        </div>
+        <div class="hint">选择某个已完成任务的综述 / 立场图谱，在下方直接预览。</div>
+      </div>
+      <iframe id="viewer" class="viewer" title="产物预览"></iframe>
+    </section>
+
+    <section id="tab-ask" class="tab">
+      <div class="panel">
+        <h2>库内问答（基础 RAG）</h2>
+        <div class="row">
+          <input type="text" id="ask-q" placeholder="基于已入库论文提问…"/>
+          <button class="btn" id="btn-ask">检索</button>
+        </div>
+      </div>
+      <div id="ask-results"></div>
+    </section>
+
+    <section id="tab-ingest" class="tab">
+      <div class="panel">
+        <h2>本地 PDF 入库</h2>
+        <div class="row">
+          <input type="text" id="ingest-dir" placeholder="本地 PDF 目录绝对路径，如 /Users/you/papers"/>
+          <button class="btn" id="btn-ingest">入库</button>
+        </div>
+        <div class="hint">增量幂等入库：已入库论文会被跳过（skipped），仅新增（added）。</div>
+      </div>
+      <div id="ingest-result"></div>
+    </section>
+
+    <section id="tab-arxiv" class="tab">
+      <div class="panel">
+        <h2>arXiv 在线检索 <span class="soon">即将上线</span></h2>
+        <div class="empty">
+          该功能尚在设计中。<br/>
+          后端已预留 <code>search_arxiv</code> 工具接口，前端将在此接入 arXiv 检索与一键入库。
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ===== 第二层 B: ChatAgent 工作区 ===== -->
+<div id="ws-chat" class="workspace ws-chat">
+  <div class="topbar">
+    <div class="back" data-home>← 入口</div>
+    <div class="wtitle">💬 ChatAgent 智能问答 <span class="wbadge">CHATAGENT</span></div>
+    <span class="health" id="health-c"><span class="dot"></span><span id="health-c-txt">检测中…</span></span>
+  </div>
+  <div class="chat-layout">
+    <aside class="chat-side">
+      <div class="side-head">
+        <div class="tokbox">
+          <div class="lbl">累计 TOKEN 消耗</div>
+          <div class="big" id="tok-total">0</div>
+          <div class="sub" id="tok-sub">全部会话合计</div>
+        </div>
+        <button class="btn purple" id="btn-chat-new" style="width:100%">+ 新会话</button>
+      </div>
+      <div class="side-list">
+        <div class="lstitle">会话记录</div>
+        <div id="sess-list"><div class="empty" style="padding:18px">暂无会话</div></div>
+      </div>
+    </aside>
+    <div class="chat-main">
+      <div class="chat-scroll" id="chat-scroll">
+        <div id="chat-thread" class="thread">
+          <div class="intro">
+            <div class="big">开始一段研究对话</div>
+            <p>检索库内论文证据后合成结构化总结（含 LaTeX 公式 / Mermaid 图），结论锚定 [n] 引用可展开原文。<br/>
+            记忆：<b>短期</b>记住本轮会话上下文（支持追问指代），<b>长期</b>记住你的偏好与规则。</p>
           </div>
         </div>
-        <button class="btn ghost" id="btn-chat-new" title="清空当前会话, 开启新对话">新会话</button>
+      </div>
+      <div class="chat-composer">
+        <div class="inner row">
+          <input type="text" id="chat-q" placeholder="提一个研究性问题，或追问上文，如：它的损失函数是什么？"/>
+          <button class="btn purple" id="btn-chat">发送</button>
+        </div>
       </div>
     </div>
-    <div id="chat-thread" class="thread"></div>
-    <div class="panel chat-composer">
-      <div class="row">
-        <input type="text" id="chat-q" placeholder="提一个研究性问题，或追问上文，如：它的损失函数是什么？"/>
-        <button class="btn" id="btn-chat">发送</button>
-      </div>
-    </div>
-  </section>
-
-  <!-- 库内问答 -->
-  <section id="tab-ask" class="tab">
-    <div class="panel">
-      <h2>库内问答（基础 RAG）</h2>
-      <div class="row">
-        <input type="text" id="ask-q" placeholder="基于已入库论文提问…"/>
-        <button class="btn" id="btn-ask">检索</button>
-      </div>
-    </div>
-    <div id="ask-results"></div>
-  </section>
-
-  <!-- PDF 入库 -->
-  <section id="tab-ingest" class="tab">
-    <div class="panel">
-      <h2>本地 PDF 入库</h2>
-      <div class="row">
-        <input type="text" id="ingest-dir" placeholder="本地 PDF 目录绝对路径，如 /Users/you/papers"/>
-        <button class="btn" id="btn-ingest">入库</button>
-      </div>
-      <div class="hint">增量幂等入库：已入库论文会被跳过（skipped），仅新增（added）。</div>
-    </div>
-    <div id="ingest-result"></div>
-  </section>
-
-  <!-- arXiv 占位 -->
-  <section id="tab-arxiv" class="tab">
-    <div class="panel">
-      <h2>arXiv 在线检索 <span class="soon">即将上线</span></h2>
-      <div class="empty">
-        该功能尚在设计中。<br/>
-        后端已预留 <code>search_arxiv</code> 工具接口，前端将在此接入 arXiv 检索与一键入库。
-      </div>
-    </div>
-  </section>
-</main>
+  </div>
+</div>
 
 <div id="toast" class="toast"></div>
 
@@ -244,29 +370,47 @@ const api = (path, opts) => fetch(path, opts).then(async r => {
 });
 function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show');
   setTimeout(()=>t.classList.remove('show'), 2200); }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
-// —— 标签页切换 ——
-document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
-  document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
-  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+// ===== 两级入口导航 =====
+function goHome(){
+  document.querySelectorAll('.workspace').forEach(w => w.classList.remove('active'));
+  $('#landing').style.display = 'flex';
+}
+function enterWorkspace(id){
+  $('#landing').style.display = 'none';
+  document.querySelectorAll('.workspace').forEach(w => w.classList.remove('active'));
+  $('#' + id).classList.add('active');
+}
+$('#enter-research').onclick = () => { enterWorkspace('ws-research'); loadTasks(); };
+$('#enter-chat').onclick = () => { enterWorkspace('ws-chat'); loadSessions(); };
+document.querySelectorAll('[data-home]').forEach(b => b.onclick = goHome);
+
+// ===== 研究工作区标签页 =====
+document.querySelectorAll('#ws-research nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#ws-research nav button').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('#ws-research .tab').forEach(x => x.classList.remove('active'));
   b.classList.add('active');
   $('#tab-' + b.dataset.tab).classList.add('active');
   if(b.dataset.tab === 'artifacts') loadArtifactOptions();
 });
 
-// —— 健康检查 ——
+// ===== 健康检查 (三处指示灯同步) =====
 async function checkHealth(){
-  const el = $('#health');
+  let cls, txt;
   try{ const h = await api('/healthz');
-    el.className = 'health ' + (h.status === 'ok' ? 'ok' : 'bad');
-    $('#health-txt').textContent = `库内 ${h.chunks} chunks · ${h.status}`;
-  }catch(e){ el.className='health bad'; $('#health-txt').textContent='后端不可达'; }
+    cls = 'health ' + (h.status === 'ok' ? 'ok' : 'bad');
+    txt = `库内 ${h.chunks} chunks · ${h.status}`;
+  }catch(e){ cls='health bad'; txt='后端不可达'; }
+  [['#health','#health-txt'],['#health-r','#health-r-txt'],['#health-c','#health-c-txt']].forEach(([a,b])=>{
+    const el=$(a); if(el){ el.className=cls; $(b).textContent=txt; }
+  });
 }
 
-// —— 任务台 ——
+// ===== 任务台 =====
 const RUNNING = ['planning','retrieving','reading','synthesizing','reviewing'];
 function statusClass(s){ if(s==='done')return 'done'; if(s==='failed')return 'failed'; return 'running'; }
-
 let allTasks = [];
 async function loadTasks(){
   try{
@@ -280,16 +424,13 @@ async function loadTasks(){
         <td><span class="status ${statusClass(t.status)}">${t.status}</span></td></tr>`).join('') +
       '</tbody></table>';
     box.querySelectorAll('tr.clickable').forEach(tr => tr.onclick = () => showDetail(tr.dataset.id));
-    // 有运行中任务则自动轮询
     if(d.items.some(t => RUNNING.includes(t.status))) schedulePoll();
   }catch(e){ $('#task-list').innerHTML = `<div class="empty">加载失败: ${esc(e.message)}</div>`; }
 }
-
 let pollTimer = null;
 function schedulePoll(){ clearTimeout(pollTimer); pollTimer = setTimeout(() => {
   loadTasks(); if(currentTask) showDetail(currentTask, true);
 }, 3000); }
-
 let currentTask = null;
 async function showDetail(id, silent){
   currentTask = id;
@@ -330,8 +471,9 @@ $('#btn-map').onclick = async () => {
   finally{ $('#btn-map').disabled = false; }
 };
 $('#btn-refresh').onclick = loadTasks;
+$('#topic').addEventListener('keydown', e => { if(e.key==='Enter') $('#btn-map').click(); });
 
-// —— 产物预览 ——
+// ===== 产物预览 =====
 function loadArtifactOptions(){
   const done = allTasks.filter(t => t.status === 'done');
   const sel = $('#artifact-select');
@@ -344,30 +486,27 @@ function loadArtifactOptions(){
     sel.innerHTML = opts.length ? opts.map(o =>
       `<option value="${encodeURIComponent(o.name)}">${esc(o.topic)} — ${esc(label(o.name))}</option>`).join('')
       : '<option value="">（暂无已完成产物）</option>';
-    if(opts.length) openArtifact(encodeURIComponent(opts[0].name));
+    if(opts.length) $('#viewer').src = '/artifacts/' + encodeURIComponent(opts[0].name);
   });
 }
 function openArtifact(encName){
+  document.querySelectorAll('#ws-research nav button').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('#ws-research .tab').forEach(x=>x.classList.remove('active'));
+  $('#ws-research nav button[data-tab=artifacts]').classList.add('active');
+  $('#tab-artifacts').classList.add('active');
   $('#viewer').src = '/artifacts/' + encName;
   const sel = $('#artifact-select'); if(sel) sel.value = encName;
-  // 切到产物标签
-  document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
-  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
-  document.querySelector('nav button[data-tab=artifacts]').classList.add('active');
-  $('#tab-artifacts').classList.add('active');
 }
 $('#artifact-select').onchange = e => { if(e.target.value) $('#viewer').src = '/artifacts/' + e.target.value; };
 $('#btn-open-new').onclick = () => { const v=$('#artifact-select').value; if(v) window.open('/artifacts/'+v,'_blank'); };
 
-// —— 库内问答 ——
+// ===== 库内问答 =====
 $('#btn-ask').onclick = async () => {
   const q = $('#ask-q').value.trim();
   if(!q){ toast('请输入问题'); return; }
   const box = $('#ask-results'); box.innerHTML = '<div class="empty">检索中…</div>';
   try{ const d = await api('/ask?q=' + encodeURIComponent(q), {method:'POST'});
     const hits = d.hits || [];
-    // RRF 融合分天生是 0.0x 量级, 直接裸露会被误读成"全是低分"。
-    // 改为相对相关度: 以本次最高分为基准归一化成百分比 + 排名徽章。
     const top = hits.reduce((m,h) => Math.max(m, h.score||0), 0) || 1;
     box.innerHTML = hits.length ? hits.map((h,i) => {
       const rel = Math.round((h.score||0) / top * 100);
@@ -379,26 +518,34 @@ $('#btn-ask').onclick = async () => {
           <span>相关度 ${rel}%</span></span>
       </div>
       <div class="txt">${esc(h.text||'')}</div></div>`;
-    }).join('')
-      : '<div class="empty">无命中</div>';
+    }).join('') : '<div class="empty">无命中</div>';
   }catch(e){ box.innerHTML = `<div class="empty">检索失败: ${esc(e.message)}</div>`; }
 };
 $('#ask-q').addEventListener('keydown', e => { if(e.key==='Enter') $('#btn-ask').click(); });
 
-// —— 智能问答 (合成式 RAG: /chat) ——
-if(window.mermaid) mermaid.initialize({startOnLoad:false, theme:'neutral', securityLevel:'loose'});
+// ===== PDF 入库 =====
+$('#btn-ingest').onclick = async () => {
+  const dir = $('#ingest-dir').value.trim();
+  if(!dir){ toast('请输入目录路径'); return; }
+  const box = $('#ingest-result'); box.innerHTML = '<div class="empty">入库中，请稍候…</div>';
+  $('#btn-ingest').disabled = true;
+  try{ const r = await api('/ingest', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({directory:dir})});
+    box.innerHTML = `<div class="panel"><h2>入库结果</h2><pre style="margin:0;white-space:pre-wrap;font-size:13px">${esc(JSON.stringify(r,null,2))}</pre></div>`;
+    checkHealth();
+  }catch(e){ box.innerHTML = `<div class="empty">入库失败: ${esc(e.message)}</div>`; }
+  finally{ $('#btn-ingest').disabled = false; }
+};
 
-// 把正文里的 [n] / [n, m] 引用标记替换成可点击徽章 (跳到对应证据)。
-// 注意: 论文原文本身含大量文献编号 (如 SASRec [22]), 远超本次证据数;
-// 仅把 1..maxRef 范围内的编号当作我们的可点击证据引用, 其余保持原样纯文本。
+// ===== ChatAgent 渲染辅助 =====
+if(window.mermaid) mermaid.initialize({startOnLoad:false, theme:'neutral', securityLevel:'loose'});
 function linkCitations(html, maxRef){
   return html.replace(/\[(\d+(?:\s*,\s*\d+)*)\]/g, (m, nums) => {
     const parts = nums.split(',').map(s => s.trim());
-    if(!parts.every(n => +n >= 1 && +n <= maxRef)) return m;  // 含越界编号 -> 视为原文文献引用, 不动
+    if(!parts.every(n => +n >= 1 && +n <= maxRef)) return m;
     return parts.map(n => `<span class="cite" data-ref="${n}">${n}</span>`).join('');
   });
 }
-
 async function renderMermaid(scope){
   const blocks = scope.querySelectorAll('pre code.language-mermaid, code.language-mermaid');
   let i = 0;
@@ -409,27 +556,64 @@ async function renderMermaid(scope){
     pre.replaceWith(host);
     try{ const {svg} = await mermaid.render('mmd-'+Date.now()+'-'+(i++), src);
       host.innerHTML = svg;
-    }catch(err){
-      // 渲染失败 (多为模型生成的语法瑕疵): 退化为可读的源码块, 不丢失图结构信息
-      host.className = '';
-      const p = document.createElement('pre');
-      p.textContent = src;
-      host.replaceWith(p);
-    }
+    }catch(err){ host.className=''; const p=document.createElement('pre'); p.textContent=src; host.replaceWith(p); }
   }
 }
+function renderAnswerExtras(ans, tid){
+  if(window.renderMathInElement){
+    renderMathInElement(ans, {delimiters:[
+      {left:'$$',right:'$$',display:true}, {left:'$',right:'$',display:false}]});
+  }
+  if(window.mermaid) renderMermaid(ans);
+}
 
-// —— ChatAgent 对话流 (多轮 + session) ——
+// ===== ChatAgent 会话流 + 历史侧栏 =====
 function newSessionId(){ return 's-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,8); }
 let chatSession = newSessionId();
+function clearThread(){ $('#chat-thread').innerHTML = ''; }
+function fmtTok(n){ return (n||0).toLocaleString('en-US'); }
+
+async function loadSessions(){
+  try{
+    const d = await api('/chat/sessions?limit=80');
+    $('#tok-total').textContent = fmtTok(d.total_tokens);
+    $('#tok-sub').textContent = `${d.total} 个会话合计`;
+    const box = $('#sess-list');
+    if(!d.items.length){ box.innerHTML = '<div class="empty" style="padding:18px">暂无会话</div>'; return; }
+    box.innerHTML = d.items.map(s => `<div class="sess ${s.session_id===chatSession?'active':''}" data-id="${s.session_id}">
+        <div class="t">${esc(s.title)}</div>
+        <div class="m"><span>${Math.ceil(s.turns/2)} 轮</span><span class="tk">${fmtTok(s.total_tokens)} tok</span></div>
+      </div>`).join('');
+    box.querySelectorAll('.sess').forEach(el => el.onclick = () => openSession(el.dataset.id));
+  }catch(e){ $('#sess-list').innerHTML = `<div class="empty" style="padding:18px">${esc(e.message)}</div>`; }
+}
+
+async function openSession(id){
+  chatSession = id;
+  clearThread();
+  try{
+    const d = await api('/chat/sessions/' + encodeURIComponent(id));
+    (d.turns||[]).forEach(t => {
+      if(t.role === 'user') addUserTurn(t.content);
+      else renderHistoryBot(t.content, t.tokens);
+    });
+  }catch(e){ toast('载入会话失败: ' + e.message); }
+  loadSessions();
+  $('#chat-q').focus();
+}
 
 $('#btn-chat-new').onclick = () => {
   chatSession = newSessionId();
-  $('#chat-thread').innerHTML = '';
+  clearThread();
+  $('#chat-thread').innerHTML = `<div class="intro"><div class="big">开始一段研究对话</div>
+    <p>检索库内论文证据后合成结构化总结（含 LaTeX 公式 / Mermaid 图），结论锚定 [n] 引用可展开原文。</p></div>`;
+  loadSessions();
   toast('已开启新会话');
 };
 
+function removeIntro(){ const i=$('#chat-thread .intro'); if(i) i.remove(); }
 function addUserTurn(q){
+  removeIntro();
   const t = document.createElement('div');
   t.className = 'turn user';
   t.innerHTML = `<div class="bubble">${esc(q)}</div>`;
@@ -437,16 +621,27 @@ function addUserTurn(q){
   t.scrollIntoView({behavior:'smooth', block:'end'});
 }
 
+// 历史回看的 bot 轮 (只有正文 + token, 无证据卡片)
+function renderHistoryBot(content, tokens){
+  removeIntro();
+  const t = document.createElement('div');
+  t.className = 'turn bot';
+  const tid = Math.random().toString(36).slice(2,8);
+  let html = window.marked ? marked.parse(content || '') : esc(content||'');
+  html = linkCitations(html, 0);
+  const tok = tokens ? `<span class="tok">${fmtTok(tokens)} tok</span>` : '';
+  t.innerHTML = `<div class="who"><span class="ai">ChatAgent</span>${tok}</div><div class="answer">${html}</div>`;
+  $('#chat-thread').appendChild(t);
+  renderAnswerExtras(t.querySelector('.answer'), tid);
+}
+
 function renderBotTurn(t, d){
   const refs = d.evidence || [];
-  // 1) markdown -> html, 把 1..refs.length 的 [n] 变可点击引用
   let html = window.marked ? marked.parse(d.answer || '') : esc(d.answer||'');
   html = linkCitations(html, refs.length);
-  // 2) 记忆命中提示
   const mem = (d.used_memory||[]).length
     ? `<div class="mem">已注入偏好/规则：` + d.used_memory.map(m =>
         `<span class="tag">${esc(m.category)}</span>${esc(m.content)}`).join(' ') + `</div>` : '';
-  // 3) 引用区 (ref id 按 turn 唯一, 避免多轮 id 冲突)
   const tid = t.dataset.tid;
   const refsHtml = refs.length ? `<div class="refs"><h3>证据来源（${refs.length}）· 点引用编号或下方卡片展开原文</h3>` +
     refs.map(r => `<div class="ref" id="ref-${tid}-${r.ref}">
@@ -454,16 +649,10 @@ function renderBotTurn(t, d){
         <span class="rtoggle" data-ref="${r.ref}">展开原文 ▾</span></div>
       <div class="rq">${esc(r.quote||'')}</div></div>`).join('') + `</div>` : '';
   const intent = d.intent ? `<span class="intent">· ${esc(d.intent)}</span>` : '';
-  t.innerHTML = `<div class="who"><span class="ai">ChatAgent</span>${intent}</div>`
+  const tok = d.usage && d.usage.total_tokens ? `<span class="tok">${fmtTok(d.usage.total_tokens)} tok</span>` : '';
+  t.innerHTML = `<div class="who"><span class="ai">ChatAgent</span>${intent}${tok}</div>`
     + `<div class="answer">${html}${mem}</div>${refsHtml}`;
-
-  const ans = t.querySelector('.answer');
-  if(window.renderMathInElement){
-    renderMathInElement(ans, {delimiters:[
-      {left:'$$',right:'$$',display:true}, {left:'$',right:'$',display:false}]});
-  }
-  if(window.mermaid) renderMermaid(ans);
-  // 引用交互按本 turn 作用域绑定
+  renderAnswerExtras(t.querySelector('.answer'), tid);
   t.querySelectorAll('.cite').forEach(c => c.onclick = () => focusRef(tid, c.dataset.ref));
   t.querySelectorAll('.rtoggle').forEach(x => x.onclick = () => toggleRef(tid, x.dataset.ref));
   t.scrollIntoView({behavior:'smooth', block:'start'});
@@ -485,6 +674,7 @@ $('#btn-chat').onclick = async () => {
     const d = await api('/chat', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({question:q, session_id:chatSession})});
     renderBotTurn(t, d);
+    loadSessions();
   }catch(e){ t.innerHTML = `<div class="who"><span class="ai">ChatAgent</span></div><div class="answer"><div class="empty">合成失败: ${esc(e.message)}</div></div>`; }
   finally{ $('#btn-chat').disabled = false; }
 };
@@ -498,24 +688,7 @@ function focusRef(tid, n){
 }
 function toggleRef(tid, n){ const el = $('#ref-' + tid + '-' + n); if(el) el.classList.toggle('open'); }
 
-// —— PDF 入库 ——
-$('#btn-ingest').onclick = async () => {
-  const dir = $('#ingest-dir').value.trim();
-  if(!dir){ toast('请输入目录路径'); return; }
-  const box = $('#ingest-result'); box.innerHTML = '<div class="empty">入库中，请稍候…</div>';
-  $('#btn-ingest').disabled = true;
-  try{ const r = await api('/ingest', {method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({directory:dir})});
-    box.innerHTML = `<div class="panel"><h2>入库结果</h2><pre style="margin:0;white-space:pre-wrap;font-size:13px">${esc(JSON.stringify(r,null,2))}</pre></div>`;
-    checkHealth();
-  }catch(e){ box.innerHTML = `<div class="empty">入库失败: ${esc(e.message)}</div>`; }
-  finally{ $('#btn-ingest').disabled = false; }
-};
-
-function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c =>
-  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-
-// 初始化
+// ===== 初始化 =====
 checkHealth(); loadTasks();
 setInterval(checkHealth, 15000);
 </script>

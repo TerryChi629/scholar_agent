@@ -351,6 +351,14 @@ ChatAgent.answer(question)
 - `interfaces/api.py`：`ChatRequest` 新增 `session_id`，`/chat` 透传。
 - chat 档位经 `AGENT_MODEL_CHAT` env 切 low / mid / high（M7 `resolve_agent_model`），零代码改动；选定生产档位 DeepSeek(mid)，测试期切回 GLM low。
 
+#### M10.6 会话记录持久化 + token 追踪 + 两级入口前端
+
+- **会话持久化 + token（`chat/session.py`）**：在 M10.2 双表上扩列——`chat_sessions` 加 `title`（首条 user 问题截 40 字）+ `total_tokens`（累计），`chat_turns` 加 `tokens`（每轮 LLM 消耗）。`_ensure_column`（PRAGMA 查列→缺失则 `ALTER TABLE ADD COLUMN`）兼容旧库，旧会话显示「(未命名会话)」+0 token。`append_turn(..., tokens=0)` UPSERT 累加 + 取首问为 title；新增 `list_sessions(limit)` / `get_session(id)` 供前端侧栏与回看。
+- **token 链路**：`synthesizer.synthesize` 返回 usage → `ChatResult.usage` → `agent.answer` 把 assistant 轮 `append_turn(tokens=usage.total_tokens)` 落库 → `GET /chat/sessions` 聚合 `total_tokens`。
+- **接口（`interfaces/api.py`）**：`GET /chat/sessions`（total / total_tokens 聚合 / items）+ `GET /chat/sessions/{id}`（完整记录含每轮 token，空则 404）。
+- **两级入口前端（`web/index.html`，深色霓虹）**：第一层 `#landing` 全屏选入口（双卡片 research 青蓝 RESEARCH / chat 紫红 CHATAGENT，带 tag 标识），第二层 `#ws-research`（tab 导航）/ `#ws-chat`（侧栏 + 对话流），「← 入口」返回。ChatAgent 侧栏固定 280px：顶部 token 统计盒（累计 + 会话数）+「+ 新会话」，下方会话列表点击 `openSession` 回看；`renderHistoryBot` 渲染历史正文+token（无证据卡片，历史只存 answer），实时 `renderBotTurn` 含证据/引用/记忆 + token 徽章。
+- 主题：CSS 变量 --cyan/--blue/--purple/--magenta + body::before 辉光 / body::after 网格 + 玻璃拟态 + 渐变文字。零构建链不变（marked/KaTeX/Mermaid CDN）。
+
 ---
 
 ## 7. 编码规范

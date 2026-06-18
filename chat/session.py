@@ -31,6 +31,8 @@ def _conn() -> sqlite3.Connection:
             session_id TEXT PRIMARY KEY,
             summary TEXT,
             summarized_upto INTEGER,
+            title TEXT,
+            total_tokens INTEGER DEFAULT 0,
             created_at REAL,
             updated_at REAL
         )"""
@@ -41,13 +43,24 @@ def _conn() -> sqlite3.Connection:
             seq INTEGER,
             role TEXT,
             content TEXT,
+            tokens INTEGER DEFAULT 0,
             created_at REAL
         )"""
     )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_chat_turns_sess ON chat_turns(session_id, seq)"
     )
+    # 兼容旧库 (M10 之前无 title/total_tokens/tokens 列): 缺失则补列。
+    _ensure_column(conn, "chat_sessions", "title", "TEXT")
+    _ensure_column(conn, "chat_sessions", "total_tokens", "INTEGER DEFAULT 0")
+    _ensure_column(conn, "chat_turns", "tokens", "INTEGER DEFAULT 0")
     return conn
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, col: str, decl: str) -> None:
+    cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if col not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
 
 
 def _next_seq(conn: sqlite3.Connection, session_id: str) -> int:
@@ -57,8 +70,8 @@ def _next_seq(conn: sqlite3.Connection, session_id: str) -> int:
     return (row[0] + 1) if row and row[0] is not None else 0
 
 
-def append_turn(session_id: str, role: str, content: str) -> None:
-    """追加一轮对话 (role: user|assistant)。"""
+def append_turn(session_id: str, role: str, content: str, tokens: int = 0) -> None:
+    """追加一轮对话 (role: user|assistant)。tokens: 本轮 LLM 消耗 (assistant 轮才有)。"""
     if not settings.chat_session_enabled or not (session_id or "").strip():
         return
     content = (content or "").strip()
@@ -69,14 +82,19 @@ def append_turn(session_id: str, role: str, content: str) -> None:
     with conn:
         seq = _next_seq(conn, session_id)
         conn.execute(
-            "INSERT INTO chat_turns VALUES (?,?,?,?,?)",
-            (session_id, seq, role, content, now),
+            "INSERT INTO chat_turns (session_id, seq, role, content, tokens, created_at) VALUES (?,?,?,?,?,?)",
+            (session_id, seq, role, content, int(tokens or 0), now),
         )
+        # 标题取首条 user 问题 (截断); total_tokens 累加。
+        title = content[:40] if (role == "user" and seq == 0) else None
         conn.execute(
-            """INSERT INTO chat_sessions (session_id, summary, summarized_upto, created_at, updated_at)
-               VALUES (?, '', -1, ?, ?)
-               ON CONFLICT(session_id) DO UPDATE SET updated_at=excluded.updated_at""",
-            (session_id, now, now),
+            """INSERT INTO chat_sessions (session_id, summary, summarized_upto, title, total_tokens, created_at, updated_at)
+               VALUES (?, '', -1, ?, ?, ?, ?)
+               ON CONFLICT(session_id) DO UPDATE SET
+                 updated_at=excluded.updated_at,
+                 total_tokens=COALESCE(total_tokens,0)+?,
+                 title=COALESCE(title, ?)""",
+            (session_id, title, int(tokens or 0), now, now, int(tokens or 0), title),
         )
     conn.close()
 
@@ -167,3 +185,57 @@ def maybe_summarize(session_id: str) -> None:
         log_event("chat.session.summarized", session_id=session_id, upto=new_upto)
     except Exception as exc:  # noqa: BLE001  摘要失败不阻断对话
         log_event("chat.session.summarize_failed", level="WARNING", error=str(exc))
+
+
+# —— 会话记录查询 (供前端历史侧栏 / token 统计) ——
+
+def list_sessions(limit: int = 50) -> list[dict]:
+    """列出全部会话 (按最近更新倒序), 含标题/轮数/累计 token。"""
+    conn = _conn()
+    rows = conn.execute(
+        """SELECT s.session_id, s.title, s.total_tokens, s.created_at, s.updated_at,
+                  (SELECT COUNT(*) FROM chat_turns t WHERE t.session_id = s.session_id) AS turns
+           FROM chat_sessions s
+           ORDER BY s.updated_at DESC LIMIT ?""",
+        (int(limit),),
+    ).fetchall()
+    conn.close()
+    return [
+        {
+            "session_id": r[0],
+            "title": r[1] or "(未命名会话)",
+            "total_tokens": r[2] or 0,
+            "created_at": r[3],
+            "updated_at": r[4],
+            "turns": r[5] or 0,
+        }
+        for r in rows
+    ]
+
+
+def get_session(session_id: str) -> dict:
+    """返回单个会话的完整对话记录 (含每轮 token)。"""
+    conn = _conn()
+    srow = conn.execute(
+        "SELECT title, total_tokens, summary, created_at, updated_at FROM chat_sessions WHERE session_id=?",
+        (session_id,),
+    ).fetchone()
+    turns = conn.execute(
+        "SELECT seq, role, content, tokens, created_at FROM chat_turns WHERE session_id=? ORDER BY seq ASC",
+        (session_id,),
+    ).fetchall()
+    conn.close()
+    if not srow and not turns:
+        return {}
+    return {
+        "session_id": session_id,
+        "title": (srow[0] if srow else None) or "(未命名会话)",
+        "total_tokens": (srow[1] if srow else 0) or 0,
+        "summary": (srow[2] if srow else "") or "",
+        "created_at": srow[3] if srow else None,
+        "updated_at": srow[4] if srow else None,
+        "turns": [
+            {"seq": t[0], "role": t[1], "content": t[2], "tokens": t[3] or 0, "created_at": t[4]}
+            for t in turns
+        ],
+    }
