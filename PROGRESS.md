@@ -255,6 +255,55 @@
 
 ---
 
+### 阶段 16：产物美化（综述 HTML + 图谱节点可读性）
+
+> 背景：飞书推送的产物体验不佳——①综述只有 markdown 底稿，飞书内点开是纯文本不直观；②立场图谱论文节点直接用完整英文长标题做 label，互相重叠盖住连线，画布「很乱」。
+
+- 🤖 **综述 HTML**（`tools/__init__.py` `export_review_html` + `synthesizer.py`）：引入 `python-markdown`，把 LLM 已产出的 markdown 确定性渲染为暗色主题 HTML（与立场图谱同款），**零额外 token**（排版不交给 LLM）；Synthesizer 落盘时同源生成 md 底稿 + 综述 HTML；飞书「查看综述」按钮指向 HTML，md 底稿不再重复出按钮（`interfaces/feishu.py`）
+- 🤖 **图谱节点取名**（`tools/__init__.py` + `core/label_cache.py`）：论文节点 label 改用 LLM（low 档 GLM，最便宜）起的简短可辨识短名（如 `GenRet`/`StreamVecRet`/`TrilSeqTrans`），完整标题进 hover tooltip；**批量一次性取名 + SQLite 持久化缓存**（同标题只烧一次 token，重渲染零成本），LLM 失败逐条回退确定性 `_short_label`（取冒号前简称/首词截断）；vis-network 物理引擎调散（springLength 220 / avoidOverlap 0.6 / 节点宽度限制 140）缓解重叠
+- 👤 决策：先确定性截短发现「信息损失太多」（如 `Real`/`Actions`），改用 LLM 取名；多模态视觉自检方案暂不做
+- 🤖 验证：`_short_labels` 实跑——长标题取出可辨识短名，第二次调用全缓存命中 0.0s；selfcheck 通过（13 tools）
+
+> ✅ 产物可读性达标：综述变美化 HTML，图谱节点短名清爽且信息不丢（全名在 tooltip）。
+
+---
+
+### 阶段 17：前端控制台（原生单页，FastAPI 托管）
+
+> 背景：此前只有 CLI + API，缺一个能可视化操作的入口。新增需求：做一个前端，覆盖库内问答（ask）、PDF 入库（ingest）、查看产物、发起+追踪任务，并为后续 arXiv 检索留占位。技术栈「助手拿主意」、视觉「明亮简洁」。
+
+- 👤 决策：核心场景=库内问答 / PDF 入库 / 查看产物 / 发起+追踪任务 + arXiv 占位（「留个接口，之后做去 arXiv 检索的功能」）；技术栈交助手定；视觉明亮简洁
+- 🤖 **原生单页前端**（`web/index.html`，新增）：纯 HTML+CSS+JS、零构建链，贴合「本地轻量」红线。5 个标签页（任务台 / 产物 / 库内问答 / PDF 入库 / arXiv 占位）；明亮简洁风（CSS 变量 `--bg:#f6f8fa` / `--accent:#0969da`）
+  - 任务台：`loadTasks`（GET /tasks 分页）、`showDetail` 详情（运行中每 3s 轮询）、发起任务（POST /tasks）
+  - 产物：收集 done 任务的 `.html` 产物，iframe 预览 + 新窗口打开
+  - 库内问答：POST `/ask?q=`，渲染命中卡片
+  - PDF 入库：POST /ingest 展示结果；`checkHealth` 轮询 /healthz 显示库内 chunks 数
+- 🤖 **FastAPI 托管**（`interfaces/api.py`）：新增 `GET /`，直接读 `web/index.html` 返回 HTMLResponse（缺失时 404 提示），零构建、零静态服务器
+- 🤖 arXiv 留占位：前端标签页 + 后端 `search_arxiv` 占位工具，等后续设计
+
+> ✅ 前端控制台落地：一个页面覆盖问答 / 入库 / 产物 / 任务全流程，FastAPI 直接托管，arXiv 留接口。
+
+---
+
+### 阶段 18：检索质量修复（体感 + 真质量 + 分块）
+
+> 背景：库内问答实跑「很搓」——①结果裸露 RRF 原始分（0.0x 量级，0.067 实为最高分却像「全低分」）；②中文 query 在 BM25 那路完全失效（分词只取英文数字），hybrid 退化为单腿向量；③片段切碎（出现 "3.1"、句中断开如 "igned for high cardinality"）。讨论后分两批修复。
+
+- 👤 决策：第一批修「score 显示（体感）+ 中文分词（真质量）」，分块暂缓；第二批确定「中文 query 多做一路（方案 B）+ 分块改切分清库全量重入」
+- 🤖 **score 显示（体感，`web/index.html`）**：库内问答结果不再裸露 RRF 原始分，改为**以本次最高分归一化的相对相关度**（排名徽章 `#1/#2…` + 进度条 + 「相关度 100%/99%」），消除「全是低分」错觉。纯前端改动
+- 🤖 **中文分词（真质量，`rag/retrieve.py` `_tokenize`）**：`_TOKEN_RE` 由只取 `[A-Za-z0-9]+` 改为「英文/数字串 + 单个 CJK 字」，中文按**相邻二元组（bigram）+ 单字兜底**切分，无需 jieba 等重依赖即可让中文 query 在 BM25 生效
+- 🤖 **中文 query 多做一路（方案 B，`rag/retrieve.py`）**：新增 `_bm25_query`——检测到中文 query 时用 low 档 LLM 译成英文术语，**只拼接给 BM25 那路**（向量仍用原中文保留跨语种语义），带 query 级缓存控 token；实测 `序列建模的技术` 原中文下 BM25 全 0 分（命中作者署名噪声），译为 `sequence modeling techniques` 后正确命中 sequence sparsity / SASRec 等相关内容，**BM25 腿真正复活**
+- 🤖 **分块质量重入库（`rag/ingest.py`）**：
+  - `_join_lines`：复原 PDF 跨行断词（`de-\nsigned` → `designed`），根治残句；保留 `(char_offset, page)` 标记以维持多页 section 的页码精度
+  - `_split_sentences` + `_chunk_section`：改为**按句子边界切（绝不切句中）**，overlap 用整句而非字符
+  - `_is_meaningful`：出库前过滤纯编号残片（"3.1"）与实质字符过少的孤片
+  - 清空 collection 全量重入：885 → **755 chunks**（噪声清理 + 整句合并），9 篇全在
+- 🤖 验证：浏览器对比前后截图——片段从 "3.1"/句中断开变为完整连贯句（完整列举基线方法、完整实验描述）；BM25 中文召回从空转变为命中真相关内容；相关度展示正常。遗留：含数学公式片段抽取仍不完美（PDF 公式抽取固有难题，非分块逻辑可解）
+
+> ✅ 检索质量修复达成：score 展示符合直觉、中文 query 双腿生效、片段成句可读；分块清噪后全量重入库。
+
+---
+
 ## 你（👤）需要本人完成的配置
 
 ### 1. 填入 LLM + Embedding API key（必需）

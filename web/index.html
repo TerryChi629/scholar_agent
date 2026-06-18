@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>ScholarStance · 科研助手控制台</title>
+<style>
+  :root{
+    --bg:#f6f8fa; --panel:#ffffff; --border:#e1e4e8; --text:#24292f;
+    --muted:#6a737d; --accent:#0969da; --accent-soft:#ddf4ff;
+    --green:#1a7f37; --red:#cf222e; --amber:#9a6700; --shadow:0 1px 3px rgba(27,31,36,.08);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Helvetica,Arial,sans-serif;
+       font-size:14px;line-height:1.6}
+  header{background:var(--panel);border-bottom:1px solid var(--border);
+         padding:14px 28px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:10}
+  header h1{font-size:18px;margin:0;font-weight:600}
+  header .badge{font-size:12px;color:var(--muted);background:var(--bg);
+                padding:2px 10px;border-radius:20px;border:1px solid var(--border)}
+  header .health{margin-left:auto;font-size:12px;color:var(--muted)}
+  .health .dot{display:inline-block;width:8px;height:8px;border-radius:50%;
+               background:#d0d7de;margin-right:5px;vertical-align:middle}
+  .health.ok .dot{background:var(--green)} .health.bad .dot{background:var(--red)}
+
+  nav{display:flex;gap:4px;padding:0 28px;background:var(--panel);border-bottom:1px solid var(--border)}
+  nav button{background:none;border:none;padding:12px 16px;font-size:14px;color:var(--muted);
+             cursor:pointer;border-bottom:2px solid transparent;font-family:inherit}
+  nav button:hover{color:var(--text)}
+  nav button.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:500}
+
+  main{max-width:1080px;margin:0 auto;padding:28px}
+  .tab{display:none} .tab.active{display:block}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:8px;
+         padding:20px;margin-bottom:20px;box-shadow:var(--shadow)}
+  .panel h2{font-size:15px;margin:0 0 14px;font-weight:600}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  input[type=text]{flex:1;min-width:200px;padding:9px 12px;border:1px solid var(--border);
+                   border-radius:6px;font-size:14px;font-family:inherit;background:#fff}
+  input[type=text]:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  button.btn{background:var(--accent);color:#fff;border:none;padding:9px 18px;border-radius:6px;
+             font-size:14px;cursor:pointer;font-family:inherit;white-space:nowrap}
+  button.btn:hover{background:#0860ca} button.btn:disabled{opacity:.5;cursor:not-allowed}
+  button.btn.ghost{background:#fff;color:var(--text);border:1px solid var(--border)}
+  button.btn.ghost:hover{background:var(--bg)}
+
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--border)}
+  th{color:var(--muted);font-weight:500} tr:last-child td{border-bottom:none}
+  tr.clickable{cursor:pointer} tr.clickable:hover{background:var(--bg)}
+
+  .status{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12px;font-weight:500}
+  .status.done{background:#dafbe1;color:var(--green)}
+  .status.failed{background:#ffebe9;color:var(--red)}
+  .status.running{background:#fff8c5;color:var(--amber)}
+
+  .stats{display:flex;gap:24px;flex-wrap:wrap;margin-top:8px}
+  .stat{display:flex;flex-direction:column}
+  .stat .num{font-size:22px;font-weight:600} .stat .lbl{font-size:12px;color:var(--muted)}
+
+  .hit{border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:10px;background:#fff}
+  .hit .meta{font-size:12px;color:var(--muted);margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .hit .meta .title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .hit .meta .rel{display:flex;align-items:center;gap:6px;flex-shrink:0}
+  .hit .rank{display:inline-block;min-width:20px;text-align:center;padding:1px 6px;border-radius:10px;background:var(--accent);color:#fff;font-weight:600}
+  .hit .bar{width:60px;height:6px;border-radius:3px;background:#e6e9ee;overflow:hidden}
+  .hit .bar i{display:block;height:100%;background:var(--accent)}
+  .hit .txt{font-size:13px;color:#333;max-height:120px;overflow:auto}
+
+  iframe.viewer{width:100%;height:78vh;border:1px solid var(--border);border-radius:8px;background:#fff}
+  .empty{color:var(--muted);text-align:center;padding:32px;font-size:13px}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#24292f;color:#fff;
+         padding:10px 20px;border-radius:6px;font-size:13px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:99}
+  .toast.show{opacity:1}
+  .soon{display:inline-block;font-size:11px;background:var(--accent-soft);color:var(--accent);
+        padding:1px 8px;border-radius:10px;margin-left:6px;vertical-align:middle}
+  code{background:var(--bg);padding:1px 5px;border-radius:4px;font-size:12px}
+  .hint{color:var(--muted);font-size:12px;margin-top:8px}
+</style>
+</head>
+<body>
+<header>
+  <h1>ScholarStance</h1>
+  <span class="badge">本地论文库 · 多 Agent 科研助手</span>
+  <span id="health" class="health"><span class="dot"></span><span id="health-txt">检测中…</span></span>
+</header>
+
+<nav>
+  <button data-tab="tasks" class="active">任务台</button>
+  <button data-tab="artifacts">产物</button>
+  <button data-tab="ask">库内问答</button>
+  <button data-tab="ingest">PDF 入库</button>
+  <button data-tab="arxiv">arXiv 检索<span class="soon">即将上线</span></button>
+</nav>
+
+<main>
+  <!-- 任务台 -->
+  <section id="tab-tasks" class="tab active">
+    <div class="panel">
+      <h2>发起立场图谱任务</h2>
+      <div class="row">
+        <input type="text" id="topic" placeholder="输入研究方向，如：生成式推荐系统"/>
+        <button class="btn" id="btn-map">发起任务</button>
+      </div>
+      <div class="hint">任务异步执行，下方列表会实时刷新状态；点击任意任务查看详情与产物。</div>
+    </div>
+    <div class="panel">
+      <h2>任务详情</h2>
+      <div id="task-detail"><div class="empty">未选择任务</div></div>
+    </div>
+    <div class="panel">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="margin:0">历史任务</h2>
+        <button class="btn ghost" id="btn-refresh">刷新</button>
+      </div>
+      <div id="task-list" style="margin-top:12px"><div class="empty">加载中…</div></div>
+    </div>
+  </section>
+
+  <!-- 产物 -->
+  <section id="tab-artifacts" class="tab">
+    <div class="panel">
+      <h2>查看产物</h2>
+      <div class="row">
+        <select id="artifact-select" style="flex:1;padding:9px;border:1px solid var(--border);border-radius:6px;font-size:14px"></select>
+        <button class="btn ghost" id="btn-open-new">新标签打开</button>
+      </div>
+      <div class="hint">选择某个已完成任务的综述 / 立场图谱，在下方直接预览。</div>
+    </div>
+    <iframe id="viewer" class="viewer" title="产物预览"></iframe>
+  </section>
+
+  <!-- 库内问答 -->
+  <section id="tab-ask" class="tab">
+    <div class="panel">
+      <h2>库内问答（基础 RAG）</h2>
+      <div class="row">
+        <input type="text" id="ask-q" placeholder="基于已入库论文提问…"/>
+        <button class="btn" id="btn-ask">检索</button>
+      </div>
+    </div>
+    <div id="ask-results"></div>
+  </section>
+
+  <!-- PDF 入库 -->
+  <section id="tab-ingest" class="tab">
+    <div class="panel">
+      <h2>本地 PDF 入库</h2>
+      <div class="row">
+        <input type="text" id="ingest-dir" placeholder="本地 PDF 目录绝对路径，如 /Users/you/papers"/>
+        <button class="btn" id="btn-ingest">入库</button>
+      </div>
+      <div class="hint">增量幂等入库：已入库论文会被跳过（skipped），仅新增（added）。</div>
+    </div>
+    <div id="ingest-result"></div>
+  </section>
+
+  <!-- arXiv 占位 -->
+  <section id="tab-arxiv" class="tab">
+    <div class="panel">
+      <h2>arXiv 在线检索 <span class="soon">即将上线</span></h2>
+      <div class="empty">
+        该功能尚在设计中。<br/>
+        后端已预留 <code>search_arxiv</code> 工具接口，前端将在此接入 arXiv 检索与一键入库。
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const api = (path, opts) => fetch(path, opts).then(async r => {
+  const data = await r.json().catch(() => ({}));
+  if(!r.ok) throw new Error(data.detail || r.statusText);
+  return data;
+});
+function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 2200); }
+
+// —— 标签页切换 ——
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  $('#tab-' + b.dataset.tab).classList.add('active');
+  if(b.dataset.tab === 'artifacts') loadArtifactOptions();
+});
+
+// —— 健康检查 ——
+async function checkHealth(){
+  const el = $('#health');
+  try{ const h = await api('/healthz');
+    el.className = 'health ' + (h.status === 'ok' ? 'ok' : 'bad');
+    $('#health-txt').textContent = `库内 ${h.chunks} chunks · ${h.status}`;
+  }catch(e){ el.className='health bad'; $('#health-txt').textContent='后端不可达'; }
+}
+
+// —— 任务台 ——
+const RUNNING = ['planning','retrieving','reading','synthesizing','reviewing'];
+function statusClass(s){ if(s==='done')return 'done'; if(s==='failed')return 'failed'; return 'running'; }
+
+let allTasks = [];
+async function loadTasks(){
+  try{
+    const d = await api('/tasks?limit=50');
+    allTasks = d.items;
+    const box = $('#task-list');
+    if(!d.items.length){ box.innerHTML = '<div class="empty">暂无任务</div>'; return; }
+    box.innerHTML = '<table><thead><tr><th>task_id</th><th>研究方向</th><th>状态</th></tr></thead><tbody>' +
+      d.items.map(t => `<tr class="clickable" data-id="${t.task_id}">
+        <td><code>${t.task_id}</code></td><td>${esc(t.topic)}</td>
+        <td><span class="status ${statusClass(t.status)}">${t.status}</span></td></tr>`).join('') +
+      '</tbody></table>';
+    box.querySelectorAll('tr.clickable').forEach(tr => tr.onclick = () => showDetail(tr.dataset.id));
+    // 有运行中任务则自动轮询
+    if(d.items.some(t => RUNNING.includes(t.status))) schedulePoll();
+  }catch(e){ $('#task-list').innerHTML = `<div class="empty">加载失败: ${esc(e.message)}</div>`; }
+}
+
+let pollTimer = null;
+function schedulePoll(){ clearTimeout(pollTimer); pollTimer = setTimeout(() => {
+  loadTasks(); if(currentTask) showDetail(currentTask, true);
+}, 3000); }
+
+let currentTask = null;
+async function showDetail(id, silent){
+  currentTask = id;
+  try{
+    const t = await api('/tasks/' + id);
+    const arts = (t.artifacts||[]).map(p => p.split('/').pop());
+    const tok = t.usage && t.usage.total_tokens ? t.usage.total_tokens : 0;
+    $('#task-detail').innerHTML = `
+      <div class="row" style="justify-content:space-between">
+        <div><code>${t.task_id}</code> · <b>${esc(t.topic)}</b></div>
+        <span class="status ${statusClass(t.status)}">${t.status}</span>
+      </div>
+      ${t.error ? `<div style="color:var(--red);margin-top:8px">错误: ${esc(t.error)}</div>` : ''}
+      <div class="stats">
+        <div class="stat"><span class="num">${t.cards}</span><span class="lbl">论文卡片</span></div>
+        <div class="stat"><span class="num">${t.nodes}</span><span class="lbl">图谱节点</span></div>
+        <div class="stat"><span class="num">${tok}</span><span class="lbl">总 tokens</span></div>
+        <div class="stat"><span class="num">${arts.length}</span><span class="lbl">产物</span></div>
+      </div>
+      ${arts.length ? '<div class="row" style="margin-top:14px">' + arts.map(n =>
+        `<button class="btn ghost" onclick="openArtifact('${encodeURIComponent(n)}')">${esc(label(n))}</button>`).join('') + '</div>' : ''}
+    `;
+    if(RUNNING.includes(t.status) && !silent) schedulePoll();
+  }catch(e){ $('#task-detail').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+}
+function label(n){ if(n.endsWith('_graph.html'))return '查看立场图谱';
+  if(n.endsWith('.html'))return '查看综述'; if(n.endsWith('.md'))return '综述底稿(md)'; return n; }
+
+$('#btn-map').onclick = async () => {
+  const topic = $('#topic').value.trim();
+  if(!topic){ toast('请输入研究方向'); return; }
+  $('#btn-map').disabled = true;
+  try{ const r = await api('/tasks', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({topic})});
+    toast('任务已发起: ' + r.task_id); $('#topic').value='';
+    await loadTasks(); showDetail(r.task_id);
+  }catch(e){ toast('发起失败: ' + e.message); }
+  finally{ $('#btn-map').disabled = false; }
+};
+$('#btn-refresh').onclick = loadTasks;
+
+// —— 产物预览 ——
+function loadArtifactOptions(){
+  const done = allTasks.filter(t => t.status === 'done');
+  const sel = $('#artifact-select');
+  Promise.all(done.map(t => api('/tasks/' + t.task_id).catch(()=>null))).then(details => {
+    const opts = [];
+    details.filter(Boolean).forEach(t => (t.artifacts||[]).forEach(p => {
+      const n = p.split('/').pop();
+      if(n.endsWith('.html')) opts.push({name:n, topic:t.topic});
+    }));
+    sel.innerHTML = opts.length ? opts.map(o =>
+      `<option value="${encodeURIComponent(o.name)}">${esc(o.topic)} — ${esc(label(o.name))}</option>`).join('')
+      : '<option value="">（暂无已完成产物）</option>';
+    if(opts.length) openArtifact(encodeURIComponent(opts[0].name));
+  });
+}
+function openArtifact(encName){
+  $('#viewer').src = '/artifacts/' + encName;
+  const sel = $('#artifact-select'); if(sel) sel.value = encName;
+  // 切到产物标签
+  document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  document.querySelector('nav button[data-tab=artifacts]').classList.add('active');
+  $('#tab-artifacts').classList.add('active');
+}
+$('#artifact-select').onchange = e => { if(e.target.value) $('#viewer').src = '/artifacts/' + e.target.value; };
+$('#btn-open-new').onclick = () => { const v=$('#artifact-select').value; if(v) window.open('/artifacts/'+v,'_blank'); };
+
+// —— 库内问答 ——
+$('#btn-ask').onclick = async () => {
+  const q = $('#ask-q').value.trim();
+  if(!q){ toast('请输入问题'); return; }
+  const box = $('#ask-results'); box.innerHTML = '<div class="empty">检索中…</div>';
+  try{ const d = await api('/ask?q=' + encodeURIComponent(q), {method:'POST'});
+    const hits = d.hits || [];
+    // RRF 融合分天生是 0.0x 量级, 直接裸露会被误读成"全是低分"。
+    // 改为相对相关度: 以本次最高分为基准归一化成百分比 + 排名徽章。
+    const top = hits.reduce((m,h) => Math.max(m, h.score||0), 0) || 1;
+    box.innerHTML = hits.length ? hits.map((h,i) => {
+      const rel = Math.round((h.score||0) / top * 100);
+      return `<div class="hit">
+      <div class="meta">
+        <span class="title">${esc((h.meta&&h.meta.title)||'未知')}</span>
+        <span class="rel"><span class="rank">#${i+1}</span>
+          <span class="bar"><i style="width:${rel}%"></i></span>
+          <span>相关度 ${rel}%</span></span>
+      </div>
+      <div class="txt">${esc(h.text||'')}</div></div>`;
+    }).join('')
+      : '<div class="empty">无命中</div>';
+  }catch(e){ box.innerHTML = `<div class="empty">检索失败: ${esc(e.message)}</div>`; }
+};
+$('#ask-q').addEventListener('keydown', e => { if(e.key==='Enter') $('#btn-ask').click(); });
+
+// —— PDF 入库 ——
+$('#btn-ingest').onclick = async () => {
+  const dir = $('#ingest-dir').value.trim();
+  if(!dir){ toast('请输入目录路径'); return; }
+  const box = $('#ingest-result'); box.innerHTML = '<div class="empty">入库中，请稍候…</div>';
+  $('#btn-ingest').disabled = true;
+  try{ const r = await api('/ingest', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({directory:dir})});
+    box.innerHTML = `<div class="panel"><h2>入库结果</h2><pre style="margin:0;white-space:pre-wrap;font-size:13px">${esc(JSON.stringify(r,null,2))}</pre></div>`;
+    checkHealth();
+  }catch(e){ box.innerHTML = `<div class="empty">入库失败: ${esc(e.message)}</div>`; }
+  finally{ $('#btn-ingest').disabled = false; }
+};
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// 初始化
+checkHealth(); loadTasks();
+setInterval(checkHealth, 15000);
+</script>
+</body>
+</html>

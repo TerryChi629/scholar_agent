@@ -21,6 +21,18 @@ app = FastAPI(title="ScholarStance API")
 _started_at = time.time()
 
 
+@app.get("/")
+def index():
+    """前端控制台单页 (web/index.html, FastAPI 直接托管, 零构建链)。"""
+    from pathlib import Path
+    from fastapi.responses import HTMLResponse, PlainTextResponse
+
+    page = Path(__file__).resolve().parent.parent / "web" / "index.html"
+    if not page.is_file():
+        return PlainTextResponse("前端页面缺失: web/index.html", status_code=404)
+    return HTMLResponse(page.read_text(encoding="utf-8"))
+
+
 class MapRequest(BaseModel):
     topic: str
 

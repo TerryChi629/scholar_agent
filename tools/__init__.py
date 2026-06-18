@@ -102,6 +102,100 @@ def _slug(text: str) -> str:
     return s.strip("_") or "unknown"
 
 
+def _short_label(title: str, max_len: int = 18) -> str:
+    """把长论文标题确定性地截短为图谱节点短标识 (不调 LLM)。仅作 LLM 取名失败时的兜底。
+
+    规则 (按优先级):
+    1) 形如 "OneRec: xxx" / "HSTU - xxx" 的, 取冒号/破折号前的缩写部分。
+    2) 否则取首个 token; 过长再按 max_len 截断加省略号。
+    完整标题仍保留在节点 tooltip 中, 短标识只为画布可读。
+    """
+    t = (title or "").strip()
+    if not t:
+        return "?"
+    import re
+    # 1) 冒号 / 破折号 前的简称 (常见论文命名: "Name: full title")
+    head = re.split(r"[:：\-—]", t, maxsplit=1)[0].strip()
+    if head and head != t and len(head) <= max_len:
+        return head
+    # 2) 标题本身够短直接用
+    if len(t) <= max_len:
+        return t
+    # 3) 取首词; 仍超长则硬截断
+    first = t.split()[0]
+    if len(first) <= max_len:
+        return first
+    return t[:max_len].rstrip() + "…"
+
+
+def _short_labels(titles: list[str]) -> dict[str, str]:
+    """为一批论文标题生成简短、可辨识的图谱节点名 (LLM, low 档, 带持久化缓存)。
+
+    省 token 策略: 按标题持久化缓存 (SQLite), 同一标题只烧一次; 整批未命中的一次
+    性请求 (一轮对话出全部)。LLM 不可用 / 解析失败时逐条回退确定性 _short_label。
+    返回 {原始标题: 短名}。
+    """
+    from core.label_cache import get_cached, put_cached
+
+    uniq = [t for t in {(t or "").strip() for t in titles} if t]
+    result: dict[str, str] = {}
+    miss: list[str] = []
+    for t in uniq:
+        cached = get_cached(t)
+        if cached:
+            result[t] = cached
+        else:
+            miss.append(t)
+
+    if miss:
+        llm_named = _llm_name_titles(miss)
+        new_pairs = []
+        for t in miss:
+            name = (llm_named.get(t) or "").strip() or _short_label(t)
+            result[t] = name
+            new_pairs.append((t, name))
+        put_cached(new_pairs)
+    return result
+
+
+def _llm_name_titles(titles: list[str]) -> dict[str, str]:
+    """调 LLM (low 档) 为论文标题批量起短名。失败返回空 dict (调用方兜底)。"""
+    import json
+    from config import settings
+    from core.llm import get_llm
+    from core.obs import log_event
+
+    provider, model, _, _ = settings.resolve_agent_model("retriever")  # 复用 low 档(最便宜)
+    numbered = "\n".join(f"{i+1}. {t}" for i, t in enumerate(titles))
+    prompt = (
+        "你是论文图谱的标注助手。下面是若干论文标题, 请为每篇起一个简短、可辨识的中文/英文短名, "
+        "用于知识图谱节点显示。要求: 优先用论文公认简称 (如 TIGER、HSTU、OneRec); 无公认简称时用 "
+        "2-6 字概括其核心方法 (如「流式向量量化检索」「序列转导推荐」); 每个短名不超过 12 个字符, "
+        "禁止照抄完整标题。仅输出 JSON 对象, key 为序号字符串, value 为短名, 不要其他文字。\n\n"
+        f"{numbered}"
+    )
+    try:
+        text = get_llm().chat_text(
+            [{"role": "user", "content": prompt}],
+            temperature=0.2, provider=provider, model=model,
+        )
+        # 容错: 剥离可能的 ```json 包裹
+        s = text.strip()
+        if s.startswith("```"):
+            s = s.split("```", 2)[1] if "```" in s[3:] else s.strip("`")
+            s = s[4:] if s.lower().startswith("json") else s
+        data = json.loads(s)
+        out: dict[str, str] = {}
+        for i, t in enumerate(titles):
+            v = data.get(str(i + 1))
+            if isinstance(v, str) and v.strip():
+                out[t] = v.strip()[:16]
+        return out
+    except Exception as exc:  # noqa: BLE001
+        log_event("graph.label_llm_failed", level="WARNING", error=str(exc))
+        return {}
+
+
 def _spans_to_quotes(spans) -> list:
     """把 evidence_spans 规整为 quote 字符串列表。
 
@@ -306,15 +400,23 @@ def export_graph_html(topic: str) -> str:
     color_by_type = {"method_family": "#4C9AFF", "paper": "#79F2C0",
                      "viewpoint": "#FFAB00"}
     shape_by_type = {"method_family": "diamond", "paper": "dot", "viewpoint": "triangle"}
+    # 论文节点用 LLM 起的短名做 label (避免长标题互相重叠), 全名进 hover tooltip。
+    # 批量取名 + 持久化缓存, 同标题不重复烧 token; LLM 失败逐条回退确定性截短。
+    paper_titles = [n.label for n in graph.nodes if n.type == "paper" and n.label]
+    short_map = _short_labels(paper_titles) if paper_titles else {}
     nodes = []
     for n in graph.nodes:
+        is_paper = n.type == "paper"
+        label = short_map.get(n.label) or (_short_label(n.label) if is_paper else n.label)
         title_bits = [f"类型: {n.type}"]
+        if is_paper and n.label and label != n.label:
+            title_bits.insert(0, n.label)  # tooltip 顶部展示完整标题
         if n.members:
             mem = ", ".join((bb.cards[m].title or m) if (bb and m in bb.cards) else m
                             for m in n.members)
             title_bits.append(f"成员: {mem}")
         nodes.append({
-            "id": n.id, "label": n.label,
+            "id": n.id, "label": label,
             "color": color_by_type.get(n.type, "#C1C7D0"),
             "shape": shape_by_type.get(n.type, "dot"),
             "title": " | ".join(title_bits),
@@ -364,8 +466,11 @@ def export_graph_html(topic: str) -> str:
   const nodes=new vis.DataSet(__NODES__);
   const edges=new vis.DataSet(__EDGES__);
   new vis.Network(document.getElementById('net'),{nodes,edges},{
-    nodes:{font:{color:'#c9d1d9'}},
-    physics:{stabilization:true,barnesHut:{springLength:160}},
+    nodes:{font:{color:'#c9d1d9',size:14,multi:false},
+           widthConstraint:{maximum:140},margin:8},
+    edges:{smooth:{type:'dynamic'}},
+    physics:{stabilization:true,
+             barnesHut:{springLength:220,avoidOverlap:0.6,gravitationalConstant:-8000}},
     interaction:{hover:true,tooltipDelay:120}
   });
 </script>

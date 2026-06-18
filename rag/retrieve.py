@@ -20,7 +20,10 @@ from rag.store import Chunk, get_store
 # RRF 平滑常数 (经验值 60): 越大则高位次的优势越平缓。
 _RRF_K = 60
 
-_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
+# 英文/数字串 + 单个 CJK 字。CJK 单字单独捕获, 再在 _tokenize 内拼成 bigram,
+# 让中文 query 在 BM25 路真正生效 (此前只取英文数字, 中文 query 完全失效)。
+_TOKEN_RE = re.compile(r"[A-Za-z0-9]+|[\u4e00-\u9fff]")
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 
 # F: 极轻量规则 rerank 的弱加分系数。刻意压得很小, 只在 RRF 分数接近时起决胜微调,
 # 不颠覆语义/字面融合的主排序。
@@ -36,10 +39,92 @@ _CORE_SECTION_RE = re.compile(
 _cache_lock = threading.Lock()
 _retrieval_cache: dict[tuple, tuple[float, list[Chunk]]] = {}
 
+# 中文 query -> 英文术语 的翻译缓存 (进程内): 同一中文 query 只烧一次 LLM。
+_qtrans_lock = threading.Lock()
+_qtrans_cache: dict[str, str] = {}
+
+
+def _has_cjk(text: str) -> bool:
+    return bool(_CJK_RE.search(text or ""))
+
+
+def _bm25_query(query: str) -> str:
+    """为 BM25 关键词召回准备 query 文本。
+
+    BM25 语料目前以英文论文为主, 中文 query 的字面 (bigram) 几乎无法命中, 会让 BM25
+    这条腿空转、hybrid 退化为单腿向量。故含中文时用 low 档 LLM 把 query 译成英文术语
+    (含核心方法名), 拼接在原 query 之后一并喂给 BM25 (原 query 保留, 兼容中英混排)。
+    向量召回仍用原始 query (跨语种语义), 互不影响。结果按 query 缓存, 控 token。
+    """
+    if not _has_cjk(query):
+        return query
+    with _qtrans_lock:
+        cached = _qtrans_cache.get(query)
+    if cached is not None:
+        return cached
+    en = _llm_translate_terms(query)
+    merged = f"{query} {en}".strip() if en else query
+    with _qtrans_lock:
+        _qtrans_cache[query] = merged
+    return merged
+
+
+def _llm_translate_terms(query: str) -> str:
+    """调 low 档 LLM 把中文检索 query 译成英文术语串。失败返回空串 (调用方回退原 query)。"""
+    from config import settings
+    from core.llm import get_llm
+    from core.obs import log_event
+
+    try:
+        provider, model, _, _ = settings.resolve_agent_model("retriever")  # 复用 low 档
+        prompt = (
+            "把下面的中文学术检索词翻译成英文检索关键词, 用于在英文论文库做 BM25 关键词匹配。"
+            "要求: 给出对应的英文术语 + 该领域常用同义表达 / 缩写 (如有), 用空格分隔, "
+            "只输出英文关键词本身, 不要解释、不要标点。\n\n"
+            f"检索词: {query}"
+        )
+        text = get_llm().chat_text(
+            [{"role": "user", "content": prompt}],
+            temperature=0.0, provider=provider, model=model,
+        )
+        # 只保留英文/数字/空格, 去掉可能混入的中文或多余符号。
+        cleaned = re.sub(r"[^A-Za-z0-9 \-]", " ", text or "")
+        return " ".join(cleaned.split())[:200]
+    except Exception as exc:  # noqa: BLE001  翻译失败不应阻断检索, 回退原 query
+        log_event("bm25.translate_failed", level="WARNING", error=str(exc))
+        return ""
+
 
 def _tokenize(text: str) -> list[str]:
-    """英文为主的简单分词: 取字母数字串并小写。"""
-    return [t.lower() for t in _TOKEN_RE.findall(text)]
+    """中英混合分词。英文/数字按串取并小写; 中文按相邻二元组 (bigram) 切分。
+
+    中文无空格分词, 单字区分度低、bigram 又能在无外部分词器 (如 jieba) 下稳定逼近
+    词级匹配, 故对连续中文取相邻二字组合 (单字也保留作兜底), 让中文 query 在 BM25
+    关键词召回真正生效。
+    """
+    if not text:
+        return []
+    tokens: list[str] = []
+    for m in _TOKEN_RE.finditer(text):
+        tok = m.group(0)
+        if _CJK_RE.match(tok):  # 单个 CJK 字: 暂存, 下面拼 bigram
+            tokens.append(tok)
+        else:
+            tokens.append(tok.lower())
+    # 把相邻的 CJK 单字拼成 bigram (保留单字兜底)。
+    out: list[str] = []
+    i = 0
+    n = len(tokens)
+    while i < n:
+        cur = tokens[i]
+        if _CJK_RE.match(cur):
+            out.append(cur)  # 单字兜底
+            if i + 1 < n and _CJK_RE.match(tokens[i + 1]):
+                out.append(cur + tokens[i + 1])  # 相邻二元组
+        else:
+            out.append(cur)
+        i += 1
+    return out
 
 
 def _bm25_search(query: str, corpus: list[Chunk], top_k: int) -> list[Chunk]:
@@ -137,7 +222,8 @@ def _hybrid_search_uncached(
     vector_hits = store.query(query, top_k=fetch_n, where=where)
 
     corpus = store.all_chunks(where=where)
-    bm25_hits = _bm25_search(query, corpus, top_k=fetch_n) if corpus else []
+    # 向量用原始 query (跨语种语义); BM25 对中文 query 先补英文术语再字面匹配。
+    bm25_hits = _bm25_search(_bm25_query(query), corpus, top_k=fetch_n) if corpus else []
 
     if not bm25_hits:  # 库为空或仅向量可用时, 退化为纯向量结果。
         return _rule_rerank(query, vector_hits[:top_k])

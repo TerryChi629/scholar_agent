@@ -102,25 +102,141 @@ def _split_sections(lines: list[_Line], body: float) -> list[tuple[str, list[_Li
     return sections
 
 
+# 纯编号 / 孤立小标题残行 (如 "3.1"、"4.2.1"), 不应单独成句, 并入后文。
+_NUM_ONLY_RE = re.compile(r"^\d{1,2}(\.\d{1,2})*\.?$")
+# 句子结束符 (中英)。在其后切句。
+_SENT_END_RE = re.compile(r"(?<=[.!?。！？])\s+|(?<=[。！？])")
+
+
+def _is_meaningful(text: str) -> bool:
+    """判定一个 chunk 是否含实质内容 (过滤纯编号 / 过短孤片)。
+
+    section 切分偶尔会把孤立的章节编号 (如 "3.1") 留成独立 chunk, 对检索是噪声;
+    要求去掉编号/标点后至少有若干个字母或 CJK 字, 才认为有检索价值。
+    """
+    t = (text or "").strip()
+    if not t or _NUM_ONLY_RE.match(t):
+        return False
+    # 实质字符 = 字母 + CJK 字; 过少 (如仅编号、单词碎片) 视为无信息。
+    meaningful = re.findall(r"[A-Za-z]|[\u4e00-\u9fff]", t)
+    return len(meaningful) >= 10
+
+
+def _join_lines(lines: list[_Line]) -> tuple[str, list[tuple[int, int]]]:
+    """把一个 section 的行拼成连续文本, 复原 PDF 跨行断词。
+
+    PDF 抽取常把单词在行末用连字符断开 (如 "de-\\nsigned"), 直接按行拼会留下
+    "de- signed" 甚至硬切出 "igned ..."。这里:
+    - 行末连字符 + 下一行: 去连字符直接拼 (de-signed -> designed);
+    - 否则用空格拼 (正常的换行视作词间空格)。
+    同时返回 [(char_offset, page)] 标记, 供按字符偏移回溯页码 (保住多页 section 的页码精度)。
+    """
+    out = ""
+    marks: list[tuple[int, int]] = []
+    for ln in lines:
+        t = ln.text.strip()
+        if not t:
+            continue
+        if not out:  # 首行: 直接作为开头
+            marks.append((0, ln.page))
+            out = t
+        elif out.endswith("-"):  # 行末连字符: 断词, 去掉连字符直接接续
+            out = out[:-1]
+            marks.append((len(out), ln.page))
+            out += t
+        else:  # 普通换行: 视作词间空格
+            out += " "
+            marks.append((len(out), ln.page))
+            out += t
+    return out, marks
+
+
+def _page_at(offset: int, marks: list[tuple[int, int]], default: int) -> int:
+    """按字符偏移取该位置所在页 (取最后一个 offset <= 目标 的标记页)。"""
+    page = default
+    for off, pg in marks:
+        if off <= offset:
+            page = pg
+        else:
+            break
+    return page
+
+
+def _split_sentences(text: str) -> list[tuple[str, int]]:
+    """按句末标点切句, 返回 [(sentence, start_offset)]。
+
+    纯编号孤片 (如 "3.1") 并入下一句, 避免成为残片。start_offset 为该句在原文中的
+    起始字符位置, 供回溯页码。
+    """
+    parts: list[tuple[str, int]] = []
+    pos = 0
+    for piece in _SENT_END_RE.split(text):
+        start = text.find(piece, pos) if piece else pos
+        if piece.strip():
+            parts.append((piece.strip(), start if start >= 0 else pos))
+        pos = (start if start >= 0 else pos) + len(piece)
+
+    sents: list[tuple[str, int]] = []
+    carry = ""
+    carry_off = 0
+    for s, off in parts:
+        if _NUM_ONLY_RE.match(s):  # 纯编号: 暂存, 拼到下一句开头
+            if not carry:
+                carry_off = off
+            carry = (carry + " " + s).strip()
+            continue
+        if carry:
+            s = f"{carry} {s}"
+            off = carry_off
+            carry = ""
+        sents.append((s, off))
+    if carry:  # 末尾残留的编号: 并到最后一句
+        if sents:
+            sents[-1] = (f"{sents[-1][0]} {carry}", sents[-1][1])
+        else:
+            sents.append((carry, carry_off))
+    return sents
+
+
 def _chunk_section(
     section: str, lines: list[_Line], size: int, overlap: int
 ) -> list[tuple[str, int, str]]:
-    """把一个 section 的行按字符预算切成 chunk。
+    """把一个 section 按句子边界切成 chunk (绝不切在句中)。
 
-    返回 [(section, page, text)]; page 取该 chunk 首行所在页。不跨 section。
+    先复原跨行断词拼成连续文本并断句, 再按字符预算逐句累积; 超预算即出一个 chunk,
+    并用尾部整句 (而非字符) 作为下一个 chunk 的 overlap, 保证片段读起来是完整句子。
+    返回 [(section, page, text)]; page 按 chunk 首句的字符偏移回溯真实页。不跨 section。
     """
+    if not lines:
+        return []
+    text, marks = _join_lines(lines)
+    sents = _split_sentences(text)
+    if not sents:
+        return []
+    default_page = lines[0].page
+
     out: list[tuple[str, int, str]] = []
-    buf = ""
-    buf_page = lines[0].page if lines else 0
-    for ln in lines:
-        if not buf:
-            buf_page = ln.page
-        buf += ln.text + "\n"
-        if len(buf) >= size:
-            out.append((section, buf_page, buf.strip()))
-            buf = buf[-overlap:] if overlap else ""
-    if buf.strip():
-        out.append((section, buf_page, buf.strip()))
+    buf: list[tuple[str, int]] = []
+    buf_len = 0
+    for s, off in sents:
+        buf.append((s, off))
+        buf_len += len(s) + 1
+        if buf_len >= size:
+            page = _page_at(buf[0][1], marks, default_page)
+            out.append((section, page, " ".join(x[0] for x in buf).strip()))
+            # 整句级 overlap: 从尾部回取若干句, 累计长度不超过 overlap。
+            keep: list[tuple[str, int]] = []
+            klen = 0
+            for prev in reversed(buf):
+                if klen + len(prev[0]) > overlap:
+                    break
+                keep.insert(0, prev)
+                klen += len(prev[0]) + 1
+            buf = keep
+            buf_len = klen
+    if buf and " ".join(x[0] for x in buf).strip():
+        page = _page_at(buf[0][1], marks, default_page)
+        out.append((section, page, " ".join(x[0] for x in buf).strip()))
     return out
 
 
@@ -176,7 +292,8 @@ def parse_pdf(path: Path) -> dict:
     chunks: list[tuple[str, int, str]] = []
     for section, sec_lines in _split_sections(lines, body):
         chunks.extend(_chunk_section(section, sec_lines, size=800, overlap=120))
-    chunks = [c for c in chunks if c[2].strip()]
+    # 过滤无信息 chunk: 纯章节编号残片 (如 "3.1") 或实质字符过少的孤片。
+    chunks = [c for c in chunks if _is_meaningful(c[2])]
     return {"title": title, "year": year, "chunks": chunks}
 
 
