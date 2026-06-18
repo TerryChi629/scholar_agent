@@ -97,6 +97,44 @@ class VectorStore:
                 papers[pid] = {"title": meta.get("title", ""), "year": meta.get("year", 0)}
         return papers
 
+    def delete_paper(self, paper_id: str) -> int:
+        """删除某篇论文的全部 chunk, 返回删除条数。供单篇更新/重入库 (先删后加)。
+
+        Chroma 无直接的"删后计数", 故先按 paper_id 取出 id 列表再删除。
+        """
+        if not paper_id:
+            return 0
+        res = self._col.get(where={"paper_id": {"$eq": paper_id}})
+        ids = res.get("ids", []) or []
+        if ids:
+            self._col.delete(ids=ids)
+        return len(ids)
+
+    def neighbors(self, paper_id: str, chunk_index: int, window: int = 1) -> list[Chunk]:
+        """取同篇论文中 chunk_index 邻域 [idx-window, idx+window] 的 chunk (按 index 升序)。
+
+        供父文档/邻居窗口扩展: 命中片段往往只是答案的一段, 拼回相邻片段给合成更完整上下文。
+        不含向量。chunk_index 缺失或无邻居时返回空。
+        """
+        if not paper_id or chunk_index is None:
+            return []
+        lo, hi = chunk_index - window, chunk_index + window
+        res = self._col.get(
+            where={"$and": [{"paper_id": {"$eq": paper_id}},
+                            {"chunk_index": {"$gte": lo}}, {"chunk_index": {"$lte": hi}}]},
+            include=["documents", "metadatas"],
+        )
+        ids = res.get("ids", []) or []
+        docs = res.get("documents", []) or []
+        metas = res.get("metadatas", []) or []
+        out: list[Chunk] = []
+        for i, cid in enumerate(ids):
+            meta = metas[i] or {}
+            out.append(Chunk(chunk_id=cid, paper_id=meta.get("paper_id", ""),
+                             text=docs[i] if i < len(docs) else "", metadata=meta))
+        out.sort(key=lambda c: int((c.metadata or {}).get("chunk_index", 0) or 0))
+        return out
+
 
 _store: VectorStore | None = None
 

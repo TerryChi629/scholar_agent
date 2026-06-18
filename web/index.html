@@ -77,7 +77,48 @@
         padding:1px 8px;border-radius:10px;margin-left:6px;vertical-align:middle}
   code{background:var(--bg);padding:1px 5px;border-radius:4px;font-size:12px}
   .hint{color:var(--muted);font-size:12px;margin-top:8px}
+
+  /* —— 智能问答: 合成答案 + 引用 —— */
+  .answer{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:22px 24px;box-shadow:var(--shadow);margin-bottom:16px}
+  .answer h1,.answer h2,.answer h3{font-size:16px;margin:18px 0 8px;font-weight:600}
+  .answer h1:first-child,.answer h2:first-child{margin-top:0}
+  .answer p{margin:8px 0}
+  .answer ul,.answer ol{margin:8px 0;padding-left:22px}
+  .answer li{margin:4px 0}
+  .answer pre{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:12px;overflow:auto}
+  .answer .mermaid{background:#fff;border:1px solid var(--border);border-radius:6px;padding:14px;margin:12px 0;text-align:center}
+  .answer .cite{display:inline-block;min-width:18px;text-align:center;background:var(--accent-soft);color:var(--accent);
+                font-size:12px;font-weight:600;padding:0 6px;border-radius:10px;cursor:pointer;vertical-align:baseline;margin:0 1px}
+  .answer .cite:hover{background:var(--accent);color:#fff}
+  .refs{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:18px 22px;box-shadow:var(--shadow);margin-bottom:16px}
+  .refs h3{font-size:14px;margin:0 0 12px;font-weight:600}
+  .ref{border-left:3px solid var(--border);padding:8px 12px;margin-bottom:10px;background:var(--bg);border-radius:0 6px 6px 0}
+  .ref.hl{border-left-color:var(--accent);background:var(--accent-soft)}
+  .ref .rmeta{font-size:12px;color:var(--muted);margin-bottom:4px}
+  .ref .rq{font-size:13px;color:#333;max-height:0;overflow:hidden;transition:max-height .25s}
+  .ref.open .rq{max-height:400px;overflow:auto}
+  .ref .rtoggle{cursor:pointer;color:var(--accent);font-size:12px}
+  .mem{font-size:12px;color:var(--muted);margin-top:6px}
+  .mem .tag{background:var(--accent-soft);color:var(--accent);padding:1px 7px;border-radius:10px;margin-right:6px}
+
+  /* —— ChatAgent 对话流 —— */
+  .thread{margin-bottom:16px}
+  .turn{margin-bottom:16px}
+  .turn.user{display:flex;justify-content:flex-end}
+  .turn.user .bubble{background:var(--accent);color:#fff;padding:9px 14px;border-radius:14px 14px 2px 14px;max-width:78%;white-space:pre-wrap}
+  .turn.bot .who{font-size:12px;color:var(--muted);margin-bottom:6px;display:flex;align-items:center;gap:6px}
+  .turn.bot .who .ai{background:var(--accent-soft);color:var(--accent);font-weight:600;padding:1px 8px;border-radius:10px}
+  .turn.bot .who .intent{font-size:11px;color:var(--muted)}
+  .chat-composer{position:sticky;bottom:0;margin-bottom:0}
+  .typing{color:var(--muted);font-size:13px;padding:4px 0}
+  .typing::after{content:'';animation:dots 1.2s steps(4,end) infinite}
+  @keyframes dots{0%{content:''}25%{content:'·'}50%{content:'··'}75%{content:'···'}}
 </style>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"/>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
 </head>
 <body>
 <header>
@@ -89,6 +130,7 @@
 <nav>
   <button data-tab="tasks" class="active">任务台</button>
   <button data-tab="artifacts">产物</button>
+  <button data-tab="chat">智能问答</button>
   <button data-tab="ask">库内问答</button>
   <button data-tab="ingest">PDF 入库</button>
   <button data-tab="arxiv">arXiv 检索<span class="soon">即将上线</span></button>
@@ -129,6 +171,29 @@
       <div class="hint">选择某个已完成任务的综述 / 立场图谱，在下方直接预览。</div>
     </div>
     <iframe id="viewer" class="viewer" title="产物预览"></iframe>
+  </section>
+
+  <!-- 智能问答 (ChatAgent · 合成式 RAG + 长短期记忆) -->
+  <section id="tab-chat" class="tab">
+    <div class="panel">
+      <div class="row" style="justify-content:space-between;align-items:flex-start">
+        <div>
+          <h2 style="margin:0">ChatAgent · 智能问答</h2>
+          <div class="hint" style="margin-top:4px">
+            多轮对话式研究助手：检索库内论文证据后合成结构化总结（含 LaTeX 公式 / Mermaid 图），结论锚定 [n] 引用可展开原文。
+            <br/>记忆：<b>短期</b>记住本轮会话上下文（支持追问指代），<b>长期</b>记住你的偏好与规则。
+          </div>
+        </div>
+        <button class="btn ghost" id="btn-chat-new" title="清空当前会话, 开启新对话">新会话</button>
+      </div>
+    </div>
+    <div id="chat-thread" class="thread"></div>
+    <div class="panel chat-composer">
+      <div class="row">
+        <input type="text" id="chat-q" placeholder="提一个研究性问题，或追问上文，如：它的损失函数是什么？"/>
+        <button class="btn" id="btn-chat">发送</button>
+      </div>
+    </div>
   </section>
 
   <!-- 库内问答 -->
@@ -319,6 +384,119 @@ $('#btn-ask').onclick = async () => {
   }catch(e){ box.innerHTML = `<div class="empty">检索失败: ${esc(e.message)}</div>`; }
 };
 $('#ask-q').addEventListener('keydown', e => { if(e.key==='Enter') $('#btn-ask').click(); });
+
+// —— 智能问答 (合成式 RAG: /chat) ——
+if(window.mermaid) mermaid.initialize({startOnLoad:false, theme:'neutral', securityLevel:'loose'});
+
+// 把正文里的 [n] / [n, m] 引用标记替换成可点击徽章 (跳到对应证据)。
+// 注意: 论文原文本身含大量文献编号 (如 SASRec [22]), 远超本次证据数;
+// 仅把 1..maxRef 范围内的编号当作我们的可点击证据引用, 其余保持原样纯文本。
+function linkCitations(html, maxRef){
+  return html.replace(/\[(\d+(?:\s*,\s*\d+)*)\]/g, (m, nums) => {
+    const parts = nums.split(',').map(s => s.trim());
+    if(!parts.every(n => +n >= 1 && +n <= maxRef)) return m;  // 含越界编号 -> 视为原文文献引用, 不动
+    return parts.map(n => `<span class="cite" data-ref="${n}">${n}</span>`).join('');
+  });
+}
+
+async function renderMermaid(scope){
+  const blocks = scope.querySelectorAll('pre code.language-mermaid, code.language-mermaid');
+  let i = 0;
+  for(const code of blocks){
+    const src = code.textContent.trim();
+    const host = document.createElement('div'); host.className = 'mermaid';
+    const pre = code.closest('pre') || code;
+    pre.replaceWith(host);
+    try{ const {svg} = await mermaid.render('mmd-'+Date.now()+'-'+(i++), src);
+      host.innerHTML = svg;
+    }catch(err){
+      // 渲染失败 (多为模型生成的语法瑕疵): 退化为可读的源码块, 不丢失图结构信息
+      host.className = '';
+      const p = document.createElement('pre');
+      p.textContent = src;
+      host.replaceWith(p);
+    }
+  }
+}
+
+// —— ChatAgent 对话流 (多轮 + session) ——
+function newSessionId(){ return 's-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,8); }
+let chatSession = newSessionId();
+
+$('#btn-chat-new').onclick = () => {
+  chatSession = newSessionId();
+  $('#chat-thread').innerHTML = '';
+  toast('已开启新会话');
+};
+
+function addUserTurn(q){
+  const t = document.createElement('div');
+  t.className = 'turn user';
+  t.innerHTML = `<div class="bubble">${esc(q)}</div>`;
+  $('#chat-thread').appendChild(t);
+  t.scrollIntoView({behavior:'smooth', block:'end'});
+}
+
+function renderBotTurn(t, d){
+  const refs = d.evidence || [];
+  // 1) markdown -> html, 把 1..refs.length 的 [n] 变可点击引用
+  let html = window.marked ? marked.parse(d.answer || '') : esc(d.answer||'');
+  html = linkCitations(html, refs.length);
+  // 2) 记忆命中提示
+  const mem = (d.used_memory||[]).length
+    ? `<div class="mem">已注入偏好/规则：` + d.used_memory.map(m =>
+        `<span class="tag">${esc(m.category)}</span>${esc(m.content)}`).join(' ') + `</div>` : '';
+  // 3) 引用区 (ref id 按 turn 唯一, 避免多轮 id 冲突)
+  const tid = t.dataset.tid;
+  const refsHtml = refs.length ? `<div class="refs"><h3>证据来源（${refs.length}）· 点引用编号或下方卡片展开原文</h3>` +
+    refs.map(r => `<div class="ref" id="ref-${tid}-${r.ref}">
+      <div class="rmeta">[${r.ref}] 《${esc(r.title)}》(${r.year})${r.section?' · '+esc(r.section):''}${r.page?' · p'+r.page:''}
+        <span class="rtoggle" data-ref="${r.ref}">展开原文 ▾</span></div>
+      <div class="rq">${esc(r.quote||'')}</div></div>`).join('') + `</div>` : '';
+  const intent = d.intent ? `<span class="intent">· ${esc(d.intent)}</span>` : '';
+  t.innerHTML = `<div class="who"><span class="ai">ChatAgent</span>${intent}</div>`
+    + `<div class="answer">${html}${mem}</div>${refsHtml}`;
+
+  const ans = t.querySelector('.answer');
+  if(window.renderMathInElement){
+    renderMathInElement(ans, {delimiters:[
+      {left:'$$',right:'$$',display:true}, {left:'$',right:'$',display:false}]});
+  }
+  if(window.mermaid) renderMermaid(ans);
+  // 引用交互按本 turn 作用域绑定
+  t.querySelectorAll('.cite').forEach(c => c.onclick = () => focusRef(tid, c.dataset.ref));
+  t.querySelectorAll('.rtoggle').forEach(x => x.onclick = () => toggleRef(tid, x.dataset.ref));
+  t.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+$('#btn-chat').onclick = async () => {
+  const q = $('#chat-q').value.trim();
+  if(!q){ toast('请输入问题'); return; }
+  addUserTurn(q);
+  $('#chat-q').value = '';
+  const t = document.createElement('div');
+  t.className = 'turn bot';
+  t.dataset.tid = Math.random().toString(36).slice(2,8);
+  t.innerHTML = `<div class="who"><span class="ai">ChatAgent</span></div><div class="typing">检索证据并合成中</div>`;
+  $('#chat-thread').appendChild(t);
+  t.scrollIntoView({behavior:'smooth', block:'start'});
+  $('#btn-chat').disabled = true;
+  try{
+    const d = await api('/chat', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({question:q, session_id:chatSession})});
+    renderBotTurn(t, d);
+  }catch(e){ t.innerHTML = `<div class="who"><span class="ai">ChatAgent</span></div><div class="answer"><div class="empty">合成失败: ${esc(e.message)}</div></div>`; }
+  finally{ $('#btn-chat').disabled = false; }
+};
+$('#chat-q').addEventListener('keydown', e => { if(e.key==='Enter') $('#btn-chat').click(); });
+
+function focusRef(tid, n){
+  const el = $('#ref-' + tid + '-' + n); if(!el) return;
+  el.closest('.refs').querySelectorAll('.ref').forEach(r => r.classList.remove('hl'));
+  el.classList.add('hl', 'open');
+  el.querySelector('.rq').scrollHeight; el.scrollIntoView({behavior:'smooth', block:'center'});
+}
+function toggleRef(tid, n){ const el = $('#ref-' + tid + '-' + n); if(el) el.classList.toggle('open'); }
 
 // —— PDF 入库 ——
 $('#btn-ingest').onclick = async () => {

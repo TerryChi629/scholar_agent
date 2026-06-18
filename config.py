@@ -45,6 +45,8 @@ class Settings:
     agent_model_reader: str = field(default_factory=lambda: _get("AGENT_MODEL_READER", ""))
     agent_model_synthesizer: str = field(default_factory=lambda: _get("AGENT_MODEL_SYNTHESIZER", ""))
     agent_model_critic: str = field(default_factory=lambda: _get("AGENT_MODEL_CRITIC", ""))
+    # M8 ChatAgent 档位 (合成/抽取/意图兜底); 测试期默认 low(GLM)。
+    agent_model_chat: str = field(default_factory=lambda: _get("AGENT_MODEL_CHAT", "low"))
 
     # —— M4 稳定性: API 重试退避 + 客户端限流 ——
     llm_max_retries: int = field(default_factory=lambda: int(_get("LLM_MAX_RETRIES", "3")))
@@ -57,6 +59,35 @@ class Settings:
 
     # —— M6 记忆: 卡片级语义记忆 (跨任务复用已精读论文的 topic 无关字段) ——
     memory_enabled: bool = field(default_factory=lambda: _get("MEMORY_ENABLED", "1") not in ("0", "false", "False"))
+
+    # —— M8 ChatAgent 轻量记忆 (memory2): 用户 preference/procedure ——
+    memory2_enabled: bool = field(default_factory=lambda: _get("MEMORY2_ENABLED", "1") not in ("0", "false", "False"))
+    # 语义 supersede 阈值: 相似度 >= 此值视为"同一条的新版本", 旧条目被取代。
+    memory2_supersede_threshold: float = field(default_factory=lambda: float(_get("MEMORY2_SUPERSEDE_THRESHOLD", "0.90")))
+    # hotness 半衰期 (天): freq×recency 的 recency 衰减。
+    memory2_half_life_days: float = field(default_factory=lambda: float(_get("MEMORY2_HALF_LIFE_DAYS", "30")))
+
+    # —— chat 短期(会话)记忆: 滑动窗口 + 摘要压缩 (指代消解/追问) ——
+    chat_session_enabled: bool = field(default_factory=lambda: _get("CHAT_SESSION_ENABLED", "1") not in ("0", "false", "False"))
+    # 注入时保留的最近对话轮数 (1 轮 = 1 问 1 答); 超窗旧轮压成滚动摘要。
+    chat_session_window_turns: int = field(default_factory=lambda: int(_get("CHAT_SESSION_WINDOW_TURNS", "4")))
+
+    # —— M9 检索纵深: 精排 / 索引工程 / 多样性 / 父文档扩展 ——
+    # cross-encoder 精排开关与模型 (本地推理, 失败回退 LLM listwise 兜底)。
+    rerank_enabled: bool = field(default_factory=lambda: _get("RERANK_ENABLED", "1") not in ("0", "false", "False"))
+    rerank_model: str = field(default_factory=lambda: _get("RERANK_MODEL", "BAAI/bge-reranker-v2-m3"))
+    # 精排候选数: 召回阶段多取 rerank_top_n 个交给精排, 精排后再裁到 top_k。
+    rerank_top_n: int = field(default_factory=lambda: int(_get("RERANK_TOP_N", "20")))
+    # cross-encoder 不可用时, 用 LLM (low 档) listwise 兜底打分。
+    rerank_llm_fallback: bool = field(default_factory=lambda: _get("RERANK_LLM_FALLBACK", "1") not in ("0", "false", "False"))
+    # MMR 多样性去冗余: lambda 越大越偏相关性, 越小越偏多样性。
+    mmr_enabled: bool = field(default_factory=lambda: _get("MMR_ENABLED", "1") not in ("0", "false", "False"))
+    mmr_lambda: float = field(default_factory=lambda: float(_get("MMR_LAMBDA", "0.7")))
+    # 父文档 / 邻居窗口扩展: 命中 chunk 后按 chunk_index 拼回相邻片段, 给合成更完整上下文。
+    context_expand_enabled: bool = field(default_factory=lambda: _get("CONTEXT_EXPAND_ENABLED", "1") not in ("0", "false", "False"))
+    context_expand_window: int = field(default_factory=lambda: int(_get("CONTEXT_EXPAND_WINDOW", "1")))
+    # 持久化 BM25 索引: 关闭则回退每查全量重建 (向后兼容)。
+    bm25_persist_enabled: bool = field(default_factory=lambda: _get("BM25_PERSIST_ENABLED", "1") not in ("0", "false", "False"))
 
     # —— M4 可观测: 结构化日志 ——
     log_level: str = field(default_factory=lambda: _get("LOG_LEVEL", "INFO"))
@@ -78,6 +109,7 @@ class Settings:
     storage_dir: Path = field(default_factory=lambda: ROOT / _get("STORAGE_DIR", "./storage").lstrip("./"))
     chroma_dir: Path = field(default_factory=lambda: ROOT / "storage" / "chroma")
     sqlite_path: Path = field(default_factory=lambda: ROOT / "storage" / "scholarstance.db")
+    bm25_index_path: Path = field(default_factory=lambda: ROOT / "storage" / "bm25_index.pkl")
 
     # —— 飞书 ——
     feishu_webhook_url: str = field(default_factory=lambda: _get("FEISHU_WEBHOOK_URL"))
@@ -117,6 +149,7 @@ class Settings:
             "reader": self.agent_model_reader,
             "synthesizer": self.agent_model_synthesizer,
             "critic": self.agent_model_critic,
+            "chat": self.agent_model_chat,
         }.get(agent or "", "")
         spec = self._tier_spec(tier) if tier else ""
         if spec and ":" in spec:

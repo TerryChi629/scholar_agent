@@ -1,0 +1,169 @@
+"""chat 短期(会话)记忆: 滑动窗口 + 摘要压缩。
+
+与 memory2 (长期 preference/procedure) 分工:
+- memory2 = 跨会话长期记忆, 承载用户偏好/规则。
+- session  = 单会话短期记忆, 承载多轮对话历史, 用于指代消解 / 追问 / 避免重复检索。
+  生命周期 = 一次会话; 不承载论文事实 (事实只来自 RAG 证据)。
+
+存储 (复用 settings.sqlite_path, 不同表):
+- chat_sessions: 每会话一行, 存滚动摘要 (summary) + 已摘要到第几轮 (summarized_upto)。
+- chat_turns:    每轮一行 (role + content), 按 seq 递增。
+
+注入策略:
+- 取最近 window_turns 轮原文; 更早的轮被压成 summary (用 low 档 LLM)。
+- 注入块 = [会话摘要] + [最近N轮对话], 供合成端做指代消解。
+"""
+from __future__ import annotations
+
+import sqlite3
+import time
+
+from config import settings
+from core.llm import get_llm
+from core.obs import log_event
+
+
+def _conn() -> sqlite3.Connection:
+    settings.ensure_dirs()
+    conn = sqlite3.connect(settings.sqlite_path)
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS chat_sessions (
+            session_id TEXT PRIMARY KEY,
+            summary TEXT,
+            summarized_upto INTEGER,
+            created_at REAL,
+            updated_at REAL
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS chat_turns (
+            session_id TEXT,
+            seq INTEGER,
+            role TEXT,
+            content TEXT,
+            created_at REAL
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chat_turns_sess ON chat_turns(session_id, seq)"
+    )
+    return conn
+
+
+def _next_seq(conn: sqlite3.Connection, session_id: str) -> int:
+    row = conn.execute(
+        "SELECT MAX(seq) FROM chat_turns WHERE session_id=?", (session_id,)
+    ).fetchone()
+    return (row[0] + 1) if row and row[0] is not None else 0
+
+
+def append_turn(session_id: str, role: str, content: str) -> None:
+    """追加一轮对话 (role: user|assistant)。"""
+    if not settings.chat_session_enabled or not (session_id or "").strip():
+        return
+    content = (content or "").strip()
+    if not content:
+        return
+    conn = _conn()
+    now = time.time()
+    with conn:
+        seq = _next_seq(conn, session_id)
+        conn.execute(
+            "INSERT INTO chat_turns VALUES (?,?,?,?,?)",
+            (session_id, seq, role, content, now),
+        )
+        conn.execute(
+            """INSERT INTO chat_sessions (session_id, summary, summarized_upto, created_at, updated_at)
+               VALUES (?, '', -1, ?, ?)
+               ON CONFLICT(session_id) DO UPDATE SET updated_at=excluded.updated_at""",
+            (session_id, now, now),
+        )
+    conn.close()
+
+
+def _load(session_id: str) -> tuple[str, int, list[tuple]]:
+    """返回 (summary, summarized_upto, turns) ; turns=[(seq, role, content), ...] 按 seq 升序。"""
+    conn = _conn()
+    srow = conn.execute(
+        "SELECT summary, summarized_upto FROM chat_sessions WHERE session_id=?",
+        (session_id,),
+    ).fetchone()
+    turns = conn.execute(
+        "SELECT seq, role, content FROM chat_turns WHERE session_id=? ORDER BY seq ASC",
+        (session_id,),
+    ).fetchall()
+    conn.close()
+    summary = srow[0] if srow else ""
+    upto = srow[1] if srow else -1
+    return summary or "", upto if upto is not None else -1, turns
+
+
+def build_context_block(session_id: str) -> str:
+    """组织会话上下文注入块: [会话摘要] + [最近N轮对话]。无历史返回空串。"""
+    if not settings.chat_session_enabled or not (session_id or "").strip():
+        return ""
+    summary, _, turns = _load(session_id)
+    if not turns and not summary:
+        return ""
+
+    window = max(settings.chat_session_window_turns, 1) * 2  # 1 轮 = 1 user + 1 assistant
+    recent = turns[-window:]
+    lines: list[str] = []
+    if summary:
+        lines.append(f"[早前对话摘要] {summary}")
+    for _, role, content in recent:
+        who = "用户" if role == "user" else "助手"
+        lines.append(f"{who}: {content}")
+    if not lines:
+        return ""
+    return (
+        "【当前会话上下文】(仅用于理解指代/追问, 不得作为论文事实来源):\n"
+        + "\n".join(lines)
+    )
+
+
+_SUMMARY_SYS = (
+    "把下面的多轮对话压缩成一段简洁的会话摘要 (3-5 句), 保留: 用户问过的核心主题、"
+    "已给出的关键结论指向、未尽的追问线索。只输出摘要本身, 不要解释。"
+)
+
+
+def maybe_summarize(session_id: str) -> None:
+    """超窗的旧轮压成滚动摘要 (low 档 LLM); 失败静默跳过, 不阻断主链路。"""
+    if not settings.chat_session_enabled or not (session_id or "").strip():
+        return
+    summary, upto, turns = _load(session_id)
+    window = max(settings.chat_session_window_turns, 1) * 2
+    # 只在历史超过窗口时压缩; 待压缩范围 = (upto, len-window]
+    if len(turns) <= window:
+        return
+    cut = len(turns) - window  # 这之前 (seq < turns[cut].seq) 的轮要进摘要
+    pending = [t for t in turns[:cut] if t[0] > upto]
+    if not pending:
+        return
+
+    convo = "\n".join(
+        f"{'用户' if r == 'user' else '助手'}: {c}" for _, r, c in pending
+    )
+    base = f"已有摘要: {summary}\n\n新增对话:\n{convo}" if summary else convo
+    try:
+        provider, model, _, _ = settings.resolve_agent_model("chat")
+        new_summary = get_llm().chat_text(
+            [{"role": "system", "content": _SUMMARY_SYS},
+             {"role": "user", "content": base}],
+            temperature=0.0, provider=provider, model=model,
+        )
+        new_summary = " ".join((new_summary or "").split())
+        if not new_summary:
+            return
+        new_upto = pending[-1][0]
+        conn = _conn()
+        with conn:
+            conn.execute(
+                "UPDATE chat_sessions SET summary=?, summarized_upto=?, updated_at=? WHERE session_id=?",
+                (new_summary, new_upto, time.time(), session_id),
+            )
+        conn.close()
+        log_event("chat.session.summarized", session_id=session_id, upto=new_upto)
+    except Exception as exc:  # noqa: BLE001  摘要失败不阻断对话
+        log_event("chat.session.summarize_failed", level="WARNING", error=str(exc))

@@ -335,6 +335,12 @@ def ingest_dir(directory: str) -> dict:
             for i, (section, page, text) in enumerate(parsed["chunks"])
         ]
         store.add(chunks)
+        # 增量更新持久化 BM25 索引 (与向量库同步, 避免下次查询全量重建)。
+        try:
+            from rag.bm25_index import add_chunks as bm25_add
+            bm25_add(chunks)
+        except Exception:  # noqa: BLE001  索引更新失败不应阻断入库 (查询侧会回退重建)
+            pass
         existing.add(pid)  # 防同次目录内重复路径再次处理
         total_chunks += len(chunks)
         added += 1

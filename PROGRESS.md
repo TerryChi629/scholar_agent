@@ -304,6 +304,60 @@
 
 ---
 
+### 阶段 19：M8 —— 对话式 RAG / ChatAgent（确定性主链路 + 薄记忆 memory2）
+
+> 背景：map（综述/图谱）之外，缺一个轻量「库内对话问答」入口。讨论中明确：**RAG 主导事实、memory 仅辅助风格**，不复用 ReAct loop（避免多跳烧 token），不动现有卡片记忆，先不做知识图谱/综述流程。先评审定调（memory2 砍到 preference+procedure 两类、纳入小评估闭环、检索债务分阶段 v1 只补 delete_paper），再一气呵成实现 M8.9 的 12 步。详见 CLAUDE.md M8 节 + 10.5 节。
+
+- 👤 决策：①memory2 用薄版（只 preference+procedure，event/profile 延后）；②评估闭环纳入 v1（小评估集 + recall@k/MRR/可回溯率）；③检索债务文档化、v1 只补 delete_paper；④ChatAgent **不继承 BaseAgent**，函数级组合复用内核（共享内核函数，不共享类继承）；⑤慢路径接口 v1 预留、ChatResult 用 dataclass、慢路径工具集仅 rag_query；⑥**测试期统一走 GLM（low 档）**，需效果时再切高档（走 M7 resolve_agent_model 零代码改动）
+- 🤖 **耦合哲学（CLAUDE.md M8.0 第 5 条）**：ChatAgent 与 BaseAgent 三大契约不匹配（输入裸 question 非黑板 / 确定性一次合成非 ReAct / 直接返回 ChatResult 非写回黑板），故不继承；改为复用 `core.run_loop`（仅慢路径）/`core.llm`/`core.obs`/`settings`，符合宪法「轻框架、组合优先」
+- 🤖 **检索债务（`rag/store.py`）**：补 `delete_paper(paper_id) -> int`（按 paper_id 取 ids 再 delete），支撑单篇更新「先删后加」
+- 🤖 **memory2 薄版子系统（`memory2/`）**：models（MemoryItem + content_hash 精确去重键）/ store（SQLite 双表 `memory_items` chash UNIQUE + `memory_replacements` supersede 审计链）/ memorizer（写入三规则：hash 命中→reinforce freq+1；语义≥0.90→supersede；0.70-0.90 直接新增）/ retriever（向量全扫 + 关键词 RRF，retrieval/hotness 各归一到[0,1]再加权 0.85/0.15）/ injection（procedure>preference 排序，freq≤1 标「低置信」）
+- 🤖 **chat 主链路（`chat/`）**：intent 规则路由（5 类意图，无 LLM）/ retriever（复用 hybrid_search 按 paper 聚合）/ synthesizer（确定性证据排版 [n] + 一次 LLM 合成）/ memory_writer（low 档抽取规整）/ agent（ChatAgent 快慢双路径，慢路径 v1 回退快路径）
+- 🤖 **评估闭环（`eval/`）**：qa_set.jsonl 10 条人工标注 + run_eval.py（recall@k / MRR / 引用可回溯率，`--no-chat` 只跑检索省 token）
+- 🤖 **接口**：CLI `chat <question>`（`interfaces/cli.py`）+ `POST /chat`（`interfaces/api.py`）
+- 🤖 **配置（`config.py`）**：新增 `agent_model_chat`（默认 low）+ chat 档位映射；`memory2_enabled`/`memory2_supersede_threshold`(0.90)/`memory2_half_life_days`(30)
+- 🤖 验证（全程走 GLM glm-4-flash）：selfcheck 通过（12 tools）；IntentRouter 5/5（含修复 hybrid 误判——新增疑问标记正则，`has_remember and has_knowledge and has_question` 才路由 hybrid，规则内容含知识词但无疑问不再误触发）；memory2 读写链路通过（add/精确去重 reinforce/recall/injection 优先级与低置信标记正确）；ChatAgent 端到端通过（检索→证据[1][2]→注入偏好→GLM 一次合成，答案带可回溯引用、命中「用中文」偏好）；eval 检索基线 recall@k=1.0 / MRR=1.0（关键词口径 v1 基线）
+
+> ✅ M8 达成：对话式 RAG 跑通，确定性主链路 + 薄记忆 memory2 + 评估闭环；慢路径与 event/profile 记忆留作后续阶段。
+
+---
+
+### 阶段 20：M9 —— 检索纵深（多阶段 rerank 精排 + 索引工程 + 多样性 + 父文档扩展）
+
+> 背景：M8 后盘点 RAG 现状，已知债务集中在「检索深度」：①BM25 每查 `all_chunks()` 全量取 + 重建 `BM25Okapi`（O(N) 重复劳动）；②只有规则 rerank、无真正的 cross-encoder 精排；③无父文档/邻居窗口扩展（命中片段只是答案一段）；④top-k 易出现近重复片段。讨论定调把检索升级为**多阶段管线**，各阶段 config 可关、关闭即退化为上游结果（向后兼容），所有重型/外部依赖（cross-encoder、LLM、embedding、磁盘索引）失败均有回退、绝不阻断主检索。
+
+- 👤 决策（三个 AskUserQuestion 分叉，全选推荐项）：①精排=**本地 cross-encoder + LLM 兜底**；②索引工程=**持久化+增量 BM25 索引 + 父文档/邻居窗口扩展 + MMR 多样性去冗余**（三项全做）；③**跑改造前后对比**量化收益
+- 🤖 **多阶段检索管线（`rag/retrieve.py`）**：召回(向量+BM25) → RRF 融合 → 规则 rerank → cross-encoder/LLM 精排 → MMR 去冗余 → 父文档扩展 → top_k。召回阶段多取候选 `fetch_n = max(top_k×3, rerank_top_n)` 给精排足够池子，最后裁到 top_k
+- 🤖 **精排（`rag/rerank.py`）三级回退**：本地 cross-encoder（`BAAI/bge-reranker-v2-m3`，query×doc 交叉编码）优先 → 失败回退 LLM listwise 打分（low 档 GLM，0-10 评分，解析 JSON）→ 再失败保持上游排序。cross-encoder 懒加载单例 + `_ce_unavailable` 失败标志（失败一次不再反复尝试）
+- 🤖 **持久化 + 增量 BM25 索引（`rag/bm25_index.py`）**：消灭「每查全量重建」。pickle 落盘只存 tokenized 语料 + chunk 元信息（不存 BM25Okapi 对象，加载后懒重建）；进程内单例（磁盘优先→缺失则全量重建并落盘）；ingest 时 `add_chunks` 按 chunk_id 去重增量追加并落盘；支持 paper/year 过滤
+- 🤖 **MMR 多样性去冗余（`rag/rerank.py` mmr）**：`val = λ·rel[i] − (1−λ)·max_sim`，λ=0.7 偏相关性；复用 embedding 算片段间相似度，query 相关性用精排后 score 归一近似；embedding 失败退化为按 score 截断
+- 🤖 **父文档/邻居窗口扩展（`rag/store.py` neighbors + `rag/retrieve.py` _expand_context）**：命中 chunk 后按 `paper_id + chunk_index` 取邻域 `[idx−window, idx+window]` 拼回合并文本（window=1）给合成更完整上下文；原命中片段存 `metadata['hit_text']` 供精确回溯，同篇被吸收的邻居去重不重复出现
+- 🤖 **引用回溯精度（`chat/retriever.py` + `chat/synthesizer.py`）**：父文档扩展后 span 透传 `hit_text`，synthesizer 的 `quote` 用 `hit_text`（精确命中片段）而非扩展合并文本，引用更可定位
+- 🤖 **配置（`config.py`）**：新增 M9 配置块 `rerank_enabled`/`rerank_model`/`rerank_top_n`(20)/`rerank_llm_fallback`/`mmr_enabled`/`mmr_lambda`(0.7)/`context_expand_enabled`/`context_expand_window`(1)/`bm25_persist_enabled`，路径新增 `bm25_index_path`
+- 🤖 **依赖（`requirements.txt`）**：新增 `sentence-transformers>=3.0.0`（cross-encoder；不装则自动回退 LLM listwise）
+
+> ✅ M9 达成：检索从「召回+轻量重排」升级为「召回→融合→精排→去冗→扩展」的多阶段管线，BM25 索引持久化增量化；全管线开关化、降级化，向后兼容。
+
+---
+
+### 阶段 21：智能问答升级 —— 合成式回答 + 对话流前端 + 长短期记忆
+
+> 背景：用户体验「智能问答」后提出两点诉求：①回答不要堆原文片段，要**总结性**回答（数学公式 + 示意图 + 引用原文）；②chat 助手要有**长短期记忆**、前端要明确这是 ChatAgent。讨论定调（多个 AskUserQuestion 全选推荐项）后一气呵成实现。
+
+- 👤 决策：①回答形态=结构化文字总结 + LaTeX 公式 + Mermaid 图 + 引用锚定；②前端新建/升级为对话流面板接 `/chat`；③防幻觉=强约束 + 引用锚定；④短期记忆=滑动窗口 + 摘要压缩；⑤长期记忆维持现有两类（不新增 episodic）；⑥测试期走 GLM low 档
+- 🤖 **合成式回答（`chat/synthesizer.py`）**：`_SYS` 重写为结构化 Markdown 输出（总述→分点带 [n]→可形式化处 LaTeX `$...$`/`$$...$$`→有助理解处一个 Mermaid 图），强约束防幻觉（公式/图须有证据依据，否则只用文字）；补 Mermaid 语法约束（节点标签一律双引号包裹、禁止裸括号/逗号，否则渲染失败）
+- 🤖 **前端零构建渲染（`web/index.html`）**：marked（markdown）+ KaTeX（公式）+ Mermaid（图）全走 CDN；`linkCitations(html, maxRef)` 只把 `1..证据数` 的 `[n]` 转可点击引用徽章（论文原文自带文献编号如 `[22]` 保持纯文本，修复误判 bug）；Mermaid 渲染失败退化为可读源码块（不丢结构信息）
+- 🤖 **短期（会话）记忆（`chat/session.py`，新增）**：SQLite 双表 `chat_sessions`（滚动摘要 + 已摘要到第几轮）+ `chat_turns`（每轮 role/content）；`build_context_block` 取最近 N 轮原文 + 早前摘要组织注入块；`maybe_summarize` 把超窗旧轮用 low 档 LLM 压成滚动摘要（失败静默跳过，不阻断）；生命周期 = 一次会话，不承载论文事实
+- 🤖 **指代消解（`chat/agent.py`）**：`answer(question, task_id, session_id)`，答完写回会话 + 触发摘要；新增 `_contextualize_query` 在有会话历史时把含指代的追问（"它的量化方法"）改写成自包含检索式（low 档 LLM，失败回退原问），否则召不回
+- 🤖 **对话流前端（`web/index.html`）**：「智能问答」升级为多轮对话流（用户气泡 + ChatAgent 标注气泡），标题改「ChatAgent · 智能问答」明确身份，加「新会话」按钮重置 session，引用 id 按 turn 隔离避免多轮冲突；前端生成 `session_id` 随 `/chat` 透传
+- 🤖 **配置（`config.py`）+ 接口（`interfaces/api.py`）**：新增 `chat_session_enabled`/`chat_session_window_turns`(4)；`ChatRequest` + `/chat` 透传 `session_id`
+- 🤖 **长短期记忆分工**：短期（会话，`chat/session.py`，滑动窗口+摘要，生命周期=会话）承载多轮对话支持追问指代；长期（`memory2`，preference/procedure，跨会话）承载用户偏好/规则调风格。红线不变：两类记忆均不替代 RAG 证据，论文事实只来自 hybrid_search
+- 🤖 验证（GLM low 档）：模型试档对比（high=v4-pro 质量最强但贵 ~5.5k tokens，mid=v4-flash 折中，定档 mid 后又按测试需要切回 low）；多轮追问 Turn1 问 TIGER 语义ID、Turn2 追问「它用的量化方法」（无 TIGER 字眼）→ 正确消解并召回 TIGER 证据；会话双表正确落库（4 轮）；前端对话流多轮气泡 + 公式/图/引用渲染、引用按 turn 隔离均通过
+
+> ✅ 达成：chat 从「单轮无状态合成」升级为「多轮对话流 + 长短期记忆」；回答为结构化总结（公式/图/可点击引用回溯原文），前端明确 ChatAgent 身份。
+
+---
+
 ## 你（👤）需要本人完成的配置
 
 ### 1. 填入 LLM + Embedding API key（必需）

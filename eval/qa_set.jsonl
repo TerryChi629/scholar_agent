@@ -1,0 +1,10 @@
+{"query": "生成式推荐中的语义ID是怎么构建的", "expected_keywords": ["semantic", "id", "quantiz", "codebook"]}
+{"query": "RQ-VAE residual quantization for semantic ids", "expected_keywords": ["RQ-VAE", "residual", "quantiz"]}
+{"query": "HSTU pointwise aggregated attention", "expected_keywords": ["HSTU", "attention", "pointwise"]}
+{"query": "generative retrieval for recommendation", "expected_keywords": ["generative", "retrieval", "recommend"]}
+{"query": "sequence modeling for recommendation", "expected_keywords": ["sequence", "recommend"]}
+{"query": "如何用一个端到端模型替代多阶段排序", "expected_keywords": ["end-to-end", "stage", "rank"]}
+{"query": "vector quantization codebook collapse", "expected_keywords": ["quantiz", "codebook"]}
+{"query": "OneRec end to end generative recommendation", "expected_keywords": ["OneRec", "generative", "recommend"]}
+{"query": "transformer scaling laws for recommendation", "expected_keywords": ["scal", "transformer", "recommend"]}
+{"query": "如何评估生成式推荐的效果", "expected_keywords": ["metric", "evaluat", "recommend"]}

@@ -39,6 +39,20 @@ def cmd_ask(question: str) -> None:
         console.print(Panel(h["text"], title=f"{h['meta'].get('title','?')} (score={h['score']})"))
 
 
+def cmd_chat(question: str) -> None:
+    from chat import ChatAgent
+    res = ChatAgent().answer(question)
+    console.print(Panel(res.answer, title=f"ChatAgent · {res.intent}"))
+    if res.evidence:
+        console.print("[dim]证据:[/dim]")
+        for e in res.evidence:
+            console.print(f"  [{e['ref']}] 《{e['title']}》({e['year']}) p{e['page']}")
+    if res.used_memory:
+        console.print("[dim]命中记忆:[/dim]")
+        for m in res.used_memory:
+            console.print(f"  [{m['category']}] {m['content']}")
+
+
 def cmd_map(topic: str) -> None:
     bb = Blackboard(task_id=uuid.uuid4().hex[:8], topic=topic)
     console.print(Panel(f"研究方向: [bold]{topic}[/bold]\ntask_id: {bb.task_id}", title="ScholarStance · map"))
@@ -64,6 +78,7 @@ def cmd_tasks() -> None:
 HELP = """ScholarStance CLI
   ingest <dir>     入库本地 PDF 目录
   ask <question>   基于私有库问答 (基础 RAG)
+  chat <question>  对话式 RAG (检索+合成+记忆, M8)
   map <topic>      生成立场图谱 + 综述初稿
   resume <id>      恢复中断的任务
   tasks            列出历史任务
@@ -79,6 +94,8 @@ def main() -> None:
         cmd_ingest(rest)
     elif cmd == "ask":
         cmd_ask(rest)
+    elif cmd == "chat":
+        cmd_chat(rest)
     elif cmd == "map":
         cmd_map(rest)
     elif cmd == "resume":

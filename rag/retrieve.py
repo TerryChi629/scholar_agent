@@ -138,6 +138,59 @@ def _bm25_search(query: str, corpus: list[Chunk], top_k: int) -> list[Chunk]:
     return [c for c, _ in ranked[:top_k]]
 
 
+def _bm25_recall(query: str, top_k: int, paper_id: str | None,
+                 year_min: int | None, corpus: list[Chunk]) -> list[Chunk]:
+    """BM25 召回: 优先持久化索引 (不每查重建), 回退按 corpus 现场建。
+
+    向量用原始 query (跨语种语义); BM25 对中文 query 先补英文术语再字面匹配。
+    """
+    bm25_q = _bm25_query(query)
+    if settings.bm25_persist_enabled:
+        try:
+            from rag.bm25_index import get_index
+            return get_index().search(_tokenize(bm25_q), top_k=top_k,
+                                      where_paper_id=paper_id, year_min=year_min)
+        except Exception as exc:  # noqa: BLE001  索引异常 -> 回退现场重建
+            from core.obs import log_event
+            log_event("bm25.index_fallback", level="WARNING", error=str(exc))
+    return _bm25_search(bm25_q, corpus, top_k=top_k) if corpus else []
+
+
+def _expand_context(chunks: list[Chunk]) -> list[Chunk]:
+    """父文档/邻居窗口扩展: 把每个命中 chunk 与同篇相邻 chunk 拼回更完整上下文。
+
+    命中片段常只是答案的一段, 拼回前后 chunk 给合成端更连贯的上下文。原命中文本存入
+    metadata['hit_text'] (供精确回溯/引用), chunk.text 替换为扩展后的合并文本。
+    去重: 同篇内被合并的邻居不再单独出现 (避免重复上下文挤占)。
+    """
+    if not settings.context_expand_enabled or not chunks:
+        return chunks
+    store = get_store()
+    window = settings.context_expand_window
+    out: list[Chunk] = []
+    covered: set[str] = set()  # 已被某次扩展吸收的 chunk_id
+    for c in chunks:
+        if c.chunk_id in covered:
+            continue
+        meta = c.metadata or {}
+        idx = meta.get("chunk_index")
+        pid = c.paper_id or meta.get("paper_id", "")
+        if idx is None or not pid:
+            out.append(c)
+            continue
+        neighbors = store.neighbors(pid, int(idx), window=window)
+        if len(neighbors) <= 1:
+            out.append(c)
+            continue
+        merged = " ".join(n.text for n in neighbors if n.text).strip()
+        for n in neighbors:
+            covered.add(n.chunk_id)
+        new_meta = {**meta, "hit_text": c.text, "expanded": True}
+        out.append(Chunk(chunk_id=c.chunk_id, paper_id=pid, text=merged,
+                         metadata=new_meta, score=c.score))
+    return out
+
+
 def _rrf_fuse(rankings: list[list[Chunk]], top_k: int) -> list[Chunk]:
     """对多路排名做 RRF 融合。score = Σ 1/(k + rank)。"""
     scores: dict[str, float] = {}
@@ -205,6 +258,12 @@ def hybrid_search(
 def _hybrid_search_uncached(
     query: str, top_k: int, year_min: int | None, paper_id: str | None
 ) -> list[Chunk]:
+    """多阶段检索管线 (M9):
+
+    召回(向量+BM25) -> RRF 融合 -> 规则 rerank -> cross-encoder/LLM 精排
+    -> MMR 去冗余 -> 父文档扩展 -> top_k。
+    各阶段均可通过 config 开关关闭, 关闭后退化为上游结果 (向后兼容)。
+    """
     conds: list[dict] = []
     if year_min is not None:
         conds.append({"year": {"$gte": year_min}})
@@ -217,16 +276,27 @@ def _hybrid_search_uncached(
         where = {"$and": conds}
     store = get_store()
 
-    # 两路各自多召回一些 (取 top_k 的数倍), 再融合裁剪, 提升召回覆盖。
-    fetch_n = max(top_k * 3, top_k)
+    # 召回阶段多取候选 (取 max(top_k×3, rerank_top_n)), 给精排足够池子, 最后裁到 top_k。
+    fetch_n = max(top_k * 3, settings.rerank_top_n if settings.rerank_enabled else top_k)
     vector_hits = store.query(query, top_k=fetch_n, where=where)
 
-    corpus = store.all_chunks(where=where)
-    # 向量用原始 query (跨语种语义); BM25 对中文 query 先补英文术语再字面匹配。
-    bm25_hits = _bm25_search(_bm25_query(query), corpus, top_k=fetch_n) if corpus else []
+    # BM25 召回: 优先持久化索引; 持久化关闭/异常时回退按 corpus 现场重建。
+    corpus = store.all_chunks(where=where) if not settings.bm25_persist_enabled else []
+    bm25_hits = _bm25_recall(query, fetch_n, paper_id, year_min, corpus)
 
-    if not bm25_hits:  # 库为空或仅向量可用时, 退化为纯向量结果。
-        return _rule_rerank(query, vector_hits[:top_k])
-    # 先多取一些做 RRF 融合, 再做极轻量规则 rerank 决胜, 最后裁剪到 top_k。
-    fused = _rrf_fuse([vector_hits, bm25_hits], top_k=fetch_n)
-    return _rule_rerank(query, fused)[:top_k]
+    # 1) 融合 (无 BM25 时退化为纯向量)
+    if not bm25_hits:
+        candidates = _rule_rerank(query, vector_hits[:fetch_n])
+    else:
+        fused = _rrf_fuse([vector_hits, bm25_hits], top_k=fetch_n)
+        candidates = _rule_rerank(query, fused)
+
+    # 2) 精排: cross-encoder 优先, 失败回退 LLM, 再失败保持原序
+    from rag.rerank import rerank, mmr
+    candidates = rerank(query, candidates)
+
+    # 3) MMR 去冗余 (在精排后的候选上选出多样的 top_k)
+    selected = mmr(query, candidates, top_k=top_k)
+
+    # 4) 父文档/邻居窗口扩展 (给合成更完整上下文)
+    return _expand_context(selected)

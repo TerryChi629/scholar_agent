@@ -41,6 +41,12 @@ class IngestRequest(BaseModel):
     directory: str
 
 
+class ChatRequest(BaseModel):
+    question: str
+    task_id: str | None = None
+    session_id: str | None = None
+
+
 def _run_map(task_id: str, topic: str) -> None:
     bb = Blackboard(task_id=task_id, topic=topic)
     try:
@@ -102,6 +108,14 @@ def ingest(req: IngestRequest):
 def ask(q: str):
     from tools import rag_query
     return {"hits": rag_query(q, top_k=5)}
+
+
+@app.post("/chat")
+def chat(req: ChatRequest):
+    """对话式 RAG (M8): 检索 + 记忆注入 + 一次合成。返回 ChatResult。"""
+    from chat import ChatAgent
+    res = ChatAgent().answer(req.question, task_id=req.task_id, session_id=req.session_id)
+    return res.to_dict()
 
 
 @app.get("/healthz")
