@@ -113,6 +113,24 @@ class Settings:
     sqlite_path: Path = field(default_factory=lambda: ROOT / "storage" / "scholarstance.db")
     bm25_index_path: Path = field(default_factory=lambda: ROOT / "storage" / "bm25_index.pkl")
 
+    # —— M12 每日论文速递 (digest): 兴趣画像 + arXiv 拉新 + 排序去重 + 飞书推送 ——
+    digest_enabled: bool = field(default_factory=lambda: _get("DIGEST_ENABLED", "1") not in ("0", "false", "False"))
+    # 兴趣画像取多少天内的问答/任务作为兴趣信号。
+    digest_profile_days: int = field(default_factory=lambda: int(_get("DIGEST_PROFILE_DAYS", "30")))
+    # 画像聚类出的主题数 (3-5 为宜)。
+    digest_topics_max: int = field(default_factory=lambda: int(_get("DIGEST_TOPICS_MAX", "4")))
+    # arXiv 拉新回溯天数 (近 N 天提交的论文)。
+    digest_days_back: int = field(default_factory=lambda: int(_get("DIGEST_DAYS_BACK", "2")))
+    # 每个主题最终推送篇数 + 全天推送总上限。
+    digest_per_topic: int = field(default_factory=lambda: int(_get("DIGEST_PER_TOPIC", "3")))
+    digest_total_max: int = field(default_factory=lambda: int(_get("DIGEST_TOTAL_MAX", "8")))
+    # 每个主题从 arXiv 拉多少候选进排序 (粗排池)。
+    digest_fetch_per_topic: int = field(default_factory=lambda: int(_get("DIGEST_FETCH_PER_TOPIC", "30")))
+    # arXiv 分类过滤 (逗号分隔, 空=不限), 如 cs.IR,cs.LG,cs.CL。
+    digest_arxiv_categories: str = field(default_factory=lambda: _get("DIGEST_ARXIV_CATEGORIES", "cs.IR,cs.LG,cs.CL,cs.AI"))
+    # LLM 精排候选上限 (embedding 粗排后交给 LLM 精排的数量, 控 token)。
+    digest_rerank_top_n: int = field(default_factory=lambda: int(_get("DIGEST_RERANK_TOP_N", "8")))
+
     # —— 飞书 ——
     feishu_webhook_url: str = field(default_factory=lambda: _get("FEISHU_WEBHOOK_URL"))
     # 富卡片按钮指向的产物可达地址 (B1: FastAPI 静态托管 storage 产物)。

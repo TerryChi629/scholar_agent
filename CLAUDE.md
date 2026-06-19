@@ -399,6 +399,57 @@ ChatAgent.answer(question)
 - `RetrieverAgent.apply_result` 只需要聚合候选 `paper_id`，不应把 `hybrid_search` 的 `top_k` 放大到接近全库规模；当前硬上限 150，避免下游 MMR + 父文档扩展对全库空转。
 - 已验证任务 `6fca2ec0`（topic: 生成式推荐系统）在 GLM low 下完整完成：8 篇候选/8 张卡片/15 个图谱节点/3 个产物/24590 tokens，前端 StateGraph 调度可视化正常展示。
 
+### M12（每日论文速递：长期记忆驱动的兴趣画像 + arXiv 拉新 + 飞书推送）—— 设计文档
+
+#### M12.0 设计哲学
+
+- 让 agent “更懂我”：推送主题来自**长期记忆多源融合**（问答记录 / 任务主题 / memory2 偏好 / 卡片方法族），而非固定关键词。
+- 复用既有基建：recency 衰减用 memory2 的 half-life；embedding/LLM 走 `core/llm`；飞书走 `interfaces/feishu` 富卡片；产物可达地址走 B1 静态托管；零新依赖（arXiv 用 stdlib）。
+- 优雅降级：LLM 聚类/精排失败有确定性兜底；单主题拉新失败只跳过不阻断；未配 webhook 静默跳过。
+
+#### M12.1 兴趣画像（`digest/profile.py`）
+
+- `collect_signals()` 聚合**五源** `InterestSignal`：`custom`(前端自定义兴趣) / `qa`(问答记录) / `task`(综述方向) / `preference`(memory2 偏好) / `card`(精读方法族)，`final = 来源基础权重 × recency(half-life) × 条目强度` 排序。基础权重 `custom 1.5 > qa 1.0 > task 0.9 > preference 0.6 > card 0.5`。
+- `build_profile()` 用一次 low 档 LLM 聚类成 `digest_topics_max` 个 `InterestTopic{name(中文), query(英文检索词), reason(溯源)}`；失败回退权重最高的原始信号。
+- `profile_summary()` 供前端画像页：返回主题 + 来源分布 + 权重最高的信号（体现"懂他"）。
+
+#### M12.2 arXiv 拉新（`digest/arxiv_client.py`）
+
+- `search_arxiv_papers(query, max_results, categories, days_back)`：stdlib `urllib`+`xml.etree` 调 `export.arxiv.org/api/query`，`sortBy=submittedDate` 倒序 + 客户端按天过滤。
+- 查询必须拆词项 `all:词1 AND all:词2`（整句加引号在 arXiv 几乎命中不到，已实测）；`tools.search_arxiv` 已落实为真实检索。
+
+#### M12.3 排序去重（`digest/rank.py` + `digest/store.py`）
+
+- 去重：跳过 `digest_pushed` 表已推 id + 本地库已有（标题归一化近似）。
+- 粗排：embedding 算摘要 vs 主题语义 cosine 取 `digest_rerank_top_n`；精排：low 档 LLM listwise 选最相关 `digest_per_topic` 篇并给「为什么推给你」理由，失败回退粗排。
+
+#### M12.4 飞书日报（`interfaces/feishu.py::notify_daily_digest`）
+
+- 富交互卡片按主题分组：每主题标题 + 推荐理由 + 论文清单（标题超链 arXiv + 作者 + 💡 推荐理由）+ 「一键深度综述」按钮（`GET /digest/deepdive` 发任务）。
+
+#### M12.5 调度（`digest/runner.py` + `interfaces/api.py` + CLI）
+
+- `run_digest(dry_run)`：画像→拉新→排序去重→推送→落库，全天总量 `digest_total_max` 上限 + 同次运行跨主题去重。
+- `POST /digest/run`（支持 `dry_run`）供 cron 调用；`GET /digest/deepdive` 供卡片按钮；CLI `digest [dry]`。
+- cron 示例（每天 9 点）：`0 9 * * * curl -s -X POST http://localhost:8000/digest/run`。
+- 配置见 `config.py` `DIGEST_*`（enabled/profile_days/topics_max/days_back/per_topic/total_max/fetch_per_topic/arxiv_categories/rerank_top_n）。
+
+#### M12.6 长短期记忆设计（速递如何"越用越懂你"）
+
+速递的记忆是分层的：**长期记忆塑造"你是谁"（兴趣画像），短期记忆决定"今天推什么"（去重 + 新鲜度）**。
+
+- **长期记忆 → 兴趣画像**（`digest/profile.py`）：不新建记忆，而是"读"既有的五路长期信号（custom 自定义兴趣 / qa 问答 / task 综述方向 / preference memory2 偏好 / card 精读方法族）。三重加权 `来源基础权重 × recency 衰减 × 条目自带强度`：
+  - recency 衰减复用 memory2 的 half-life（`0.5 ** (age_days / half_life)`，默认 30 天）——即使长期记忆也有"软遗忘"，越久远权重越低。
+  - 条目强度：preference 用 `log1p(freq)`、card 用 `log1p(出现次数)`，越常用/越常读越重。
+  - 时间窗口：qa/task 只取最近 `digest_profile_days=30` 天（短期可见窗），preference/card 取全量活跃条目（真正长期）。
+- **短期记忆 → 去重与新鲜度**（`digest/store.py` + arXiv 窗口）：`digest_pushed` 表记已推 arxiv_id（`mark_pushed`/`pushed_ids`），下次跳过避免重复轰炸；rank.py 还跳过本地库已有标题；arXiv 只拉最近 `digest_days_back=2` 天的新论文。
+- **双向闭环**：长期画像 → 检索方向 → 推送 → 用户去问答/综述/精读 → 写回 `chat_turns`/`tasks`/`memory_cards` → 反哺下一次画像。用得越久画像越准；`custom` 是高权重的"手动注入长期记忆"入口，不必等系统慢慢学。
+
+#### M12.7 前端速递工作区（`web/index.html` 落地页 `#ws-digest`）
+
+- 落地页第三入口「📰 每日论文速递」(green/cyan)，进入后四标签：**推送记录**(`/digest/history`) / **主动检索**(`POST /digest/search` 即时查 arXiv) / **我的画像**(`/digest/profile` 可视化主题+来源分布+权重信号) / **定制兴趣**(`/digest/interests` CRUD)。
+- 配套 endpoints：`POST /digest/run`、`GET /digest/deepdive|history|profile`、`POST /digest/search`、`GET/POST /digest/interests`、`DELETE /digest/interests/{id}`。
+
 ---
 
 ## 7. 编码规范

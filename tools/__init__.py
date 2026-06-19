@@ -44,9 +44,17 @@ def rag_ingest(directory: str) -> dict:
 def search_arxiv(query: str, max_results: int = 5) -> list:
     """检索 arXiv 补充外部文献。Retriever 在本地库不足时调用。
 
-    TODO(Trae): 用 arxiv 库实现; 可下载 PDF 后交 rag_ingest 入库。
+    调官方 arXiv Atom API (digest.arxiv_client, stdlib 实现, 无新依赖), 按提交时间
+    倒序返回最新论文。失败返回空列表 (不阻断检索)。
     """
-    return [{"title": f"[TODO] arxiv 结果 for: {query}", "id": "placeholder"}]
+    from digest.arxiv_client import search_arxiv_papers
+
+    papers = search_arxiv_papers(query, max_results=max_results)
+    return [
+        {"title": p.title, "id": p.arxiv_id, "summary": p.summary[:400],
+         "authors": p.authors[:5], "url": p.url, "published": p.published}
+        for p in papers
+    ]
 
 
 @tool

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.parse
 import urllib.request
 
 from config import settings
@@ -128,3 +129,68 @@ def notify_task_done(topic: str, artifacts: list[str], stats: dict | None = None
     未配置 webhook 时静默跳过 (返回 False)。
     """
     return _post(_build_card(topic, artifacts, stats))
+
+
+def _deepdive_url(topic_query: str) -> str:
+    """「一键深度综述」按钮 URL: 触发后端基于该主题发起综述任务 (M12.5 GET /digest/deepdive)。"""
+    qs = urllib.parse.urlencode({"topic": topic_query})
+    return f"{settings.public_base_url}/digest/deepdive?{qs}"
+
+
+def _build_digest_card(groups: list[dict]) -> dict:
+    """构造每日论文速递富卡片 (按兴趣主题分组)。
+
+    groups: [{"name", "query", "reason", "papers": [{"title","url","reason","authors"}]}, ...]
+    每个主题: 标题 + 「为什么推给你」+ 论文清单 (每篇标题作超链 + 推荐理由) + 一键深度综述按钮。
+    """
+    total = sum(len(g.get("papers", [])) for g in groups)
+    elements: list[dict] = [
+        {"tag": "div", "text": {"tag": "lark_md",
+                                "content": f"今日为你精选 **{total}** 篇最新论文, 按你的研究兴趣分组 👇"}},
+    ]
+    for g in groups:
+        papers = g.get("papers", [])
+        if not papers:
+            continue
+        elements.append({"tag": "hr"})
+        head = f"**🔖 {g.get('name', '')}**"
+        if g.get("reason"):
+            head += f"\n*{g['reason']}*"
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": head}})
+        for p in papers:
+            title = p.get("title", "")
+            url = p.get("url", "")
+            authors = ", ".join((p.get("authors") or [])[:3])
+            line = f"・[{title}]({url})"
+            if authors:
+                line += f"\n  {authors}"
+            if p.get("reason"):
+                line += f"\n  💡 {p['reason']}"
+            elements.append({"tag": "div", "text": {"tag": "lark_md", "content": line}})
+        elements.append({"tag": "action", "actions": [{
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": f"一键深度综述「{g.get('name', '')}」"},
+            "type": "primary",
+            "url": _deepdive_url(g.get("query") or g.get("name", "")),
+        }]})
+
+    return {
+        "msg_type": "interactive",
+        "card": {
+            "header": {
+                "title": {"tag": "plain_text", "content": "📰 ScholarStance · 每日论文速递"},
+                "template": "turquoise",
+            },
+            "elements": elements,
+        },
+    }
+
+
+def notify_daily_digest(groups: list[dict]) -> bool:
+    """每日论文速递推送 (富卡片, 按主题分组)。
+
+    groups 为空或未配置 webhook 时静默跳过 (返回 False)。
+    """
+    if not groups or not any(g.get("papers") for g in groups):
+        return False
+    return _post(_build_digest_card(groups))

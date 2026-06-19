@@ -75,6 +75,23 @@ def cmd_tasks() -> None:
         console.print(f"  {tid}  [{status}]  {topic}")
 
 
+def cmd_digest(arg: str) -> None:
+    """每日论文速递: 画像 -> arXiv 拉新 -> 排序 -> 飞书推送 (M12)。dry 不推送只预览。"""
+    from digest.runner import run_digest
+    dry = arg.strip() == "dry"
+    res = run_digest(dry_run=dry)
+    if not res.get("ok"):
+        console.print(f"[yellow]未推送[/yellow]: {res.get('reason', '无结果')}")
+        return
+    for g in res.get("groups", []):
+        console.print(Panel(
+            "\n".join(f"・{p['title']}\n  💡 {p['reason']}" for p in g["papers"]),
+            title=f"🔖 {g['name']}  ({g['reason']})",
+        ))
+    tail = "(dry-run, 未推送)" if dry else f"已推送 {res.get('pushed', 0)} 篇 (sent={res.get('sent')})"
+    console.print(f"[green]速递完成[/green]: 主题 {res.get('topics')} 个, {tail}")
+
+
 HELP = """ScholarStance CLI
   ingest <dir>     入库本地 PDF 目录
   ask <question>   基于私有库问答 (基础 RAG)
@@ -82,6 +99,7 @@ HELP = """ScholarStance CLI
   map <topic>      生成立场图谱 + 综述初稿
   resume <id>      恢复中断的任务
   tasks            列出历史任务
+  digest [dry]     每日论文速递 (画像+arXiv拉新+推送); dry 仅预览不推送
 """
 
 
@@ -102,6 +120,8 @@ def main() -> None:
         cmd_resume(rest)
     elif cmd == "tasks":
         cmd_tasks()
+    elif cmd == "digest":
+        cmd_digest(rest)
     else:
         console.print(HELP)
 

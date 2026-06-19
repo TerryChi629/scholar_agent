@@ -114,6 +114,41 @@ def ingest(req: IngestRequest):
     return ingest_dir(req.directory)
 
 
+@app.get("/papers")
+def list_papers():
+    """库内全部论文 (标题/年份/片段数 + 库统计), 供前端论文库管理页。"""
+    from rag.store import get_store
+    store = get_store()
+    papers = store.list_papers()
+    chunk_cnt: dict[str, int] = {}
+    for c in store.all_chunks():
+        if c.paper_id:
+            chunk_cnt[c.paper_id] = chunk_cnt.get(c.paper_id, 0) + 1
+    items = [
+        {"paper_id": pid, "title": meta.get("title", "") or pid,
+         "year": meta.get("year", 0) or 0, "chunks": chunk_cnt.get(pid, 0)}
+        for pid, meta in papers.items()
+    ]
+    items.sort(key=lambda p: (-(p["year"] or 0), p["title"]))
+    return {"total": len(items), "chunks": store.count(), "items": items}
+
+
+@app.delete("/papers/{paper_id}")
+def delete_paper(paper_id: str):
+    """删除某篇论文的全部 chunk, 并重建 BM25 索引保持同步。"""
+    from rag.store import get_store
+    removed = get_store().delete_paper(paper_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="paper not found")
+    try:
+        from rag import bm25_index
+        bm25_index.reset()  # 语料已变, 清索引下次查询时按新库重建
+    except Exception as exc:  # noqa: BLE001  索引重置失败不阻断删除
+        log_event("papers.bm25_reset_failed", level="WARNING", error=str(exc))
+    log_event("papers.deleted", paper_id=paper_id, chunks=removed)
+    return {"ok": True, "paper_id": paper_id, "removed_chunks": removed}
+
+
 @app.post("/ask")
 def ask(q: str):
     from tools import rag_query
@@ -167,6 +202,99 @@ def delete_chat_session(session_id: str):
     if not session_mod.delete_session(session_id):
         raise HTTPException(status_code=404, detail="session not found")
     return {"ok": True, "session_id": session_id}
+
+
+@app.post("/digest/run")
+def digest_run(dry_run: bool = Query(False)):
+    """每日论文速递: 画像 -> arXiv 拉新 -> 排序去重 -> 飞书推送 (M12)。
+
+    供 cron 定时调用 (见 README/部署示例)。dry_run=true 时只返回结果不推送/落库。
+    """
+    from digest.runner import run_digest
+    result = run_digest(dry_run=dry_run)
+    log_event("digest.api.run", dry_run=dry_run, ok=result.get("ok"),
+              groups=len(result.get("groups", [])))
+    return result
+
+
+@app.get("/digest/deepdive")
+def digest_deepdive(topic: str = Query(...), bg: BackgroundTasks = None):
+    """飞书速递卡片「一键深度综述」按钮入口: 基于该主题发起完整综述任务。
+
+    返回任务详情页 URL (跳转前端), 让用户点完按钮即可看到任务进度。
+    """
+    from fastapi.responses import RedirectResponse
+
+    task_id = uuid.uuid4().hex[:8]
+    bg.add_task(_run_map, task_id, topic)
+    log_event("digest.api.deepdive", task_id=task_id, topic=topic)
+    return RedirectResponse(url=f"/?task={task_id}", status_code=303)
+
+
+@app.get("/digest/history")
+def digest_history(limit: int = Query(100, ge=1, le=500)):
+    """历史推送记录 (供前端速递工作区「推送记录」页)。"""
+    from digest import store
+    items = store.list_pushed(limit=limit)
+    return {"total": len(items), "items": items}
+
+
+@app.get("/digest/profile")
+def digest_profile():
+    """我的兴趣画像 (主题 + 来源分布 + 权重最高信号), 供前端可视化。"""
+    from digest.profile import profile_summary
+    return profile_summary()
+
+
+class DigestSearchRequest(BaseModel):
+    query: str
+    days_back: int | None = None
+
+
+@app.post("/digest/search")
+def digest_search(req: DigestSearchRequest):
+    """主动检索 arXiv 最新论文 (供前端「主动检索」页)。"""
+    from digest.arxiv_client import search_arxiv_papers
+    from config import settings as _s
+    cats = [c.strip() for c in _s.digest_arxiv_categories.split(",") if c.strip()]
+    papers = search_arxiv_papers(
+        req.query, max_results=_s.digest_fetch_per_topic,
+        categories=cats or None, days_back=req.days_back,
+    )
+    return {"query": req.query, "total": len(papers),
+            "items": [p.to_dict() for p in papers[:20]]}
+
+
+class InterestRequest(BaseModel):
+    text: str
+
+
+@app.get("/digest/interests")
+def digest_interests_list():
+    """列出用户自定义兴趣 (会并入每日画像)。"""
+    from digest import store
+    return {"items": store.list_interests()}
+
+
+@app.post("/digest/interests")
+def digest_interests_add(req: InterestRequest):
+    """自然语言新增一条自定义兴趣 (高权重并入画像)。"""
+    from digest import store
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="interest text is empty")
+    item = store.add_interest(text)
+    log_event("digest.api.interest_add", text=text[:60])
+    return item
+
+
+@app.delete("/digest/interests/{interest_id}")
+def digest_interests_delete(interest_id: str):
+    """删除一条自定义兴趣。"""
+    from digest import store
+    if not store.delete_interest(interest_id):
+        raise HTTPException(status_code=404, detail="interest not found")
+    return {"ok": True, "id": interest_id}
 
 
 @app.get("/healthz")

@@ -407,6 +407,58 @@
 
 ---
 
+### 阶段 25：Critic 证据自愈 —— Reader 证据契约对齐 + reschedule 强制重读
+
+> 背景：不论 GLM 还是 DeepSeek，Critic 都经常不通过。排查发现根因不是模型质量，而是 Reader 证据输出契约与 Critic 确定性回查规则不一致。
+
+- 🤖 **根因定位**：①`evidence_spans` 字段格式不统一（模型有时只给 `text`/`source` 而无 `quote`，被判为空证据）；②`quote` 被翻译成中文（Critic 拿中文 quote 回查英文原文必然失败）；③Critic 是硬规则不放过，且 reschedule 补救不了坏证据
+- 🤖 **最小有效修复（commit `ac8d661`）**：`tools/__init__.py` 的 `_spans_to_quotes` 兼容 `quote`/`text`，且当 `quote` 是中文译文、`text` 是英文原文时优先用 `text` 回查；`agents/reader.py` prompt 强约束逐字复制原文 + 落卡规范化；`agents/critic.py` 结构化输出 `empty_evidence_cards` + `unverifiable_evidence`(含 paper_id)；`agents/orchestrator.py` reschedule 据此强制重读坏证据论文（绕过卡片复用 / memory 复用）
+- 🤖 **验证**：旧任务 `6fca2ec0` 空证据 2→1、回查失败 6→2；新任务 `c41a504a` 第 1 次 Critic 打回坏证据 → reschedule 强制重读 → 第 2 次 Critic 通过 → remember → done，完整自愈闭环跑通
+
+> ✅ 达成：Critic 不通过从"模型背锅"回归到"证据契约对齐"，并具备坏证据自动重读补救能力。
+
+---
+
+### 阶段 26：M12 —— 每日论文速递（长期记忆驱动的兴趣画像 + arXiv 拉新 + 飞书推送）
+
+> 背景：用户希望每天自动把最新论文推送到飞书，且推送主题要利用长期记忆（问答记录等），让 agent "更懂我"。先出方案 + AskUserQuestion 敲定四个选型，再一气呵成做完后端。
+
+- 🤖 **选型敲定**：①兴趣来源=多源融合（问答记录 + 任务主题 + 偏好记忆 + 卡片方法族）；②排序=embedding 粗排 + LLM 精排；③推送=富卡片 + 推荐理由（按主题分组 + 「为什么推给你」+ 一键深度综述按钮）；④调度=cron 调 API（`POST /digest/run`）
+- 🤖 **M12.1 兴趣画像（`digest/profile.py`）**：聚合四源信号（`chat_turns` user 轮 / `tasks.topic` / memory2 preference / `memory_cards` 的 method_family），每条带时间戳，用 memory2 的 half-life recency 衰减加权（`final = 来源权重 × recency × 强度`）；一次 low 档 LLM 聚类成 3-5 个主题，每主题输出 name(中文)/query(英文检索词)/reason(溯源体现懂他)；LLM 失败回退权重最高的原始信号
+- 🤖 **M12.2 arXiv 拉新（`digest/arxiv_client.py`）**：stdlib `urllib` + `xml.etree` 解析 Atom feed（零新依赖），`sortBy=submittedDate` 倒序 + 分类过滤 + 客户端按回溯天数过滤；查询拆成词项 `all:词1 AND all:词2`（整句加引号在 arXiv 几乎命中不到，已实测修正）；同时把 `tools.search_arxiv` 从 placeholder 落实为真实检索
+- 🤖 **M12.3 排序去重（`digest/rank.py` + `digest/store.py`）**：去重跳过已推（`digest_pushed` 表）与本地库已有（标题归一化近似）→ embedding 粗排（摘要 vs 主题语义 cosine 取 top-N）→ low 档 LLM listwise 精排（结合主题意图选最相关若干篇 + 给「为什么推给你」理由），精排失败回退粗排顺序
+- 🤖 **M12.4 飞书日报（`interfaces/feishu.py` `notify_daily_digest`）**：富交互卡片，按兴趣主题分组，每主题展示推荐理由 + 论文清单（标题超链 arXiv + 作者 + 💡 推荐理由）+ 「一键深度综述」按钮（指向 `GET /digest/deepdive` 发起完整综述任务）
+- 🤖 **M12.5 调度（`digest/runner.py` + `interfaces/api.py` + CLI）**：`run_digest()` 串联 画像→拉新→排序去重→推送→落库，单主题失败只跳过不阻断，全天总量上限 + 同次运行跨主题去重；新增 `POST /digest/run`(支持 dry_run) 供 cron 定时调用、`GET /digest/deepdive` 供卡片按钮；CLI 加 `digest [dry]` 子命令
+- 🤖 **端到端验证**：`.venv/bin/python main.py digest dry` 用 28 条真实历史信号聚出 4 个主题 → 实时拉 arXiv → 粗排+精排 → 产出按主题分组、带个性化「懂他」推荐理由的速递（dry-run 不推送/不落库）
+
+> ✅ 达成：每日论文速递后端全链路打通，长期记忆驱动的兴趣画像让推送"更懂我"；零新依赖、优雅降级、cron 即可定时。
+
+### 阶段 27：M12 前端配套 —— 每日速递工作区
+
+> 背景：用户希望每日论文速递有单独入口，可看推送记录、主动检索、查看用户画像，并能用自然语言补充每日推送兴趣。
+
+- 🤖 **落地页新增「每日论文速递」入口**（`web/index.html`）：保持两级入口设计，新增 green/cyan 入口卡片，进入独立 `#ws-digest` 工作区
+- 🤖 **速递工作区四标签**：`推送记录`（`GET /digest/history`）、`主动检索`（`POST /digest/search` 即时查 arXiv）、`我的画像`（`GET /digest/profile` 可视化主题/来源/高权重信号）、`定制兴趣`（`GET/POST/DELETE /digest/interests`）
+- 🤖 **自定义兴趣闭环**：新增 `digest_interests` 表，前端自然语言补充的兴趣以最高权重 `custom=1.5` 并入画像，让用户能主动校准推送方向
+- 🤖 **画像可视化**：展示 LLM 聚类后的兴趣主题、arXiv 检索词、推荐理由、来源分布和权重最高的原始信号，帮助用户理解 agent 为什么这样推荐
+- 🤖 **端到端验证**：本地服务打开后，速递工作区能加载历史记录，`/digest/profile` 实测返回 28 条信号与 4 个兴趣主题
+
+> ✅ 达成：每日速递从后端 cron 能力升级为可交互工作区，用户可看、可搜、可调画像。
+
+### 阶段 28：论文库管理入口 + M12 收尾
+
+> 背景：落地页三个入口不对称，用户建议把论文入库与论文库管理独立出来，形成更清晰的 2×2 控制台。
+
+- 🤖 **落地页改为 2×2 四入口**：`论文综述图谱` / `ChatAgent 智能问答` / `每日论文速递` / `论文库管理`，视觉上更均衡
+- 🤖 **新增「论文库管理」工作区**：包含 `库概览`、`论文清单`、`PDF 入库`、`库内问答` 四标签；原研究工作区中的 PDF 入库与库内问答搬入新模块，研究工作区只保留研究任务与产物，去掉 arXiv 占位
+- 🤖 **论文库 API**：新增 `GET /papers`（返回论文总数、chunk 总数、每篇标题/年份/片段数）与 `DELETE /papers/{paper_id}`（删除单篇全部 chunk，并 reset BM25 索引保持同步）
+- 🤖 **文档收尾**：`CLAUDE.md` 更新 M12 记忆分层设计（长期画像 / 短期去重与新鲜度 / 双向闭环）和前端速递工作区说明；`PROGRESS.md` 补齐阶段 27/28
+- 🤖 **验证**：`/healthz` 正常、`/papers` 实测 9 篇 / 755 片段、`/digest/profile` 实测 28 条信号 / 4 个主题，浏览器预览确认四入口与论文库清单渲染正常
+
+> ✅ 达成：M12 形成完整产品闭环（速递后端 + 飞书推送 + 前端速递工作区 + 论文库管理入口），可以结项。
+
+---
+
 ## 你（👤）需要本人完成的配置
 
 ### 1. 填入 LLM + Embedding API key（必需）

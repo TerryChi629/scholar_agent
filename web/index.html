@@ -42,7 +42,8 @@
     background:linear-gradient(92deg,#fff 10%,var(--cyan) 45%,var(--purple) 90%);
     -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
   #landing .brand p{color:var(--muted);margin:14px 0 0;font-size:15px}
-  .entries{display:grid;grid-template-columns:repeat(2,minmax(280px,360px));gap:26px;width:100%;max-width:760px}
+  .entries{display:grid;grid-template-columns:repeat(2,minmax(280px,400px));gap:24px;width:100%;max-width:840px}
+  @media (max-width:680px){.entries{grid-template-columns:minmax(280px,400px);max-width:400px}}
   .entry{position:relative;cursor:pointer;border:1px solid var(--border);border-radius:20px;padding:34px 28px;
     background:linear-gradient(165deg,rgba(255,255,255,.06),rgba(255,255,255,.015));
     backdrop-filter:blur(14px);overflow:hidden;transition:transform .3s cubic-bezier(.2,.8,.2,1),box-shadow .3s,border-color .3s;min-height:248px;display:flex;flex-direction:column}
@@ -54,16 +55,24 @@
   .entry.research:hover{box-shadow:0 18px 50px rgba(34,211,238,.22),var(--glow-cyan)}
   .entry.chat{--g1:var(--purple);--g2:var(--magenta)}
   .entry.chat:hover{box-shadow:0 18px 50px rgba(168,85,247,.22),var(--glow-purple)}
+  .entry.digest{--g1:var(--green);--g2:var(--cyan)}
+  .entry.digest:hover{box-shadow:0 18px 50px rgba(52,211,153,.22),0 0 24px rgba(52,211,153,.32)}
+  .entry.library{--g1:var(--amber);--g2:var(--magenta)}
+  .entry.library:hover{box-shadow:0 18px 50px rgba(251,191,36,.2),0 0 24px rgba(251,191,36,.3)}
   .entry .ic{width:56px;height:56px;border-radius:15px;display:flex;align-items:center;justify-content:center;font-size:27px;margin-bottom:20px}
   .entry.research .ic{background:rgba(34,211,238,.14);box-shadow:var(--glow-cyan)}
   .entry.chat .ic{background:rgba(168,85,247,.14);box-shadow:var(--glow-purple)}
+  .entry.digest .ic{background:rgba(52,211,153,.14);box-shadow:0 0 24px rgba(52,211,153,.32)}
+  .entry.library .ic{background:rgba(251,191,36,.14);box-shadow:0 0 24px rgba(251,191,36,.3)}
   .entry .tag{position:absolute;top:20px;right:20px;font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px;letter-spacing:.04em}
   .entry.research .tag{color:var(--cyan);background:rgba(34,211,238,.12);border:1px solid rgba(34,211,238,.3)}
   .entry.chat .tag{color:var(--purple);background:rgba(168,85,247,.12);border:1px solid rgba(168,85,247,.3)}
+  .entry.digest .tag{color:var(--green);background:rgba(52,211,153,.12);border:1px solid rgba(52,211,153,.3)}
+  .entry.library .tag{color:var(--amber);background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.3)}
   .entry h2{font-size:21px;margin:0 0 8px;font-weight:700}
   .entry p{color:var(--muted);margin:0;font-size:13px;flex:1}
   .entry .go{margin-top:18px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px}
-  .entry.research .go{color:var(--cyan)} .entry.chat .go{color:var(--purple)}
+  .entry.research .go{color:var(--cyan)} .entry.chat .go{color:var(--purple)} .entry.digest .go{color:var(--green)} .entry.library .go{color:var(--amber)}
   .entry .go .arr{transition:transform .3s} .entry:hover .go .arr{transform:translateX(5px)}
   #landing .foot{margin-top:40px;color:var(--dim);font-size:12px;display:flex;gap:18px;align-items:center}
   #landing .foot .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--dim);margin-right:6px;vertical-align:middle}
@@ -218,6 +227,54 @@
   ::-webkit-scrollbar{width:10px;height:10px}
   ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:6px}
   ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.2)}
+
+  /* ===== 每日速递工作区 ===== */
+  .ws-digest .wbadge{color:var(--green);background:rgba(52,211,153,.12);border:1px solid rgba(52,211,153,.3)}
+  #ws-digest nav button.active{color:var(--green);border-bottom-color:var(--green)}
+  #ws-digest button.btn{background:linear-gradient(120deg,var(--green),var(--cyan));color:#04201a}
+  #ws-digest button.btn:hover{box-shadow:0 0 24px rgba(52,211,153,.35)}
+  #ws-digest button.btn.ghost{background:var(--panel);color:var(--text)}
+  #ws-digest input[type=text]:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(52,211,153,.18)}
+  .topic-chip{display:inline-flex;flex-direction:column;gap:6px;border:1px solid var(--border);border-radius:13px;padding:14px 16px;margin:0 0 12px;background:linear-gradient(150deg,rgba(52,211,153,.08),rgba(34,211,238,.05))}
+  .topic-chip .tn{font-weight:700;font-size:15px;color:#fff;display:flex;align-items:center;gap:8px}
+  .topic-chip .tq{font-size:12px;color:var(--cyan)}
+  .topic-chip .tr{font-size:12px;color:var(--muted)}
+  .topic-chip .tgo{align-self:flex-start;margin-top:4px;font-size:12px;color:var(--green);cursor:pointer;text-decoration:none}
+  .topic-chip .tgo:hover{text-decoration:underline}
+  .srcbars{display:flex;flex-direction:column;gap:9px}
+  .srcbar{display:grid;grid-template-columns:96px 1fr 40px;gap:10px;align-items:center;font-size:12px}
+  .srcbar .sn{color:var(--muted)} .srcbar .sc{color:var(--text);text-align:right;font-weight:600}
+  .srcbar .sbar{height:8px;border-radius:4px;background:rgba(255,255,255,.07);overflow:hidden}
+  .srcbar .sbar i{display:block;height:100%;background:linear-gradient(90deg,var(--green),var(--cyan))}
+  .sig{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-soft);font-size:13px}
+  .sig:last-child{border-bottom:none}
+  .sig .sgtag{flex-shrink:0;font-size:11px;padding:1px 8px;border-radius:10px;background:rgba(52,211,153,.14);color:var(--green)}
+  .sig .sgtxt{flex:1;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sig .sgw{flex-shrink:0;font-size:11px;color:var(--dim)}
+  .ilist{display:flex;flex-direction:column;gap:8px}
+  .iitem{display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:var(--panel)}
+  .iitem .it{flex:1;font-size:13px;color:var(--text)}
+  .iitem .idt{font-size:11px;color:var(--dim)}
+  .iitem .idel{border:none;background:rgba(255,255,255,.05);color:var(--dim);width:26px;height:26px;border-radius:8px;cursor:pointer;font-size:15px;flex-shrink:0}
+  .iitem .idel:hover{background:rgba(251,113,133,.18);color:var(--red)}
+  .dgpaper{border:1px solid var(--border);border-radius:11px;padding:13px;margin-bottom:10px;background:var(--panel)}
+  .dgpaper .pt{font-size:14px;font-weight:600;color:#fff;margin-bottom:5px}
+  .dgpaper .pm{font-size:12px;color:var(--muted);margin-bottom:7px;display:flex;gap:12px;flex-wrap:wrap}
+  .dgpaper .pm .pcat{color:var(--cyan)}
+  .dgpaper .ps{font-size:12px;color:var(--muted);max-height:96px;overflow:auto;line-height:1.55}
+  .dgpaper .pa{font-size:12px;color:var(--green)}
+
+  /* ===== 论文库工作区 ===== */
+  .ws-library .wbadge{color:var(--amber);background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.3)}
+  #ws-library nav button.active{color:var(--amber);border-bottom-color:var(--amber)}
+  #ws-library button.btn{background:linear-gradient(120deg,var(--amber),#f97316);color:#1a1204}
+  #ws-library button.btn:hover{box-shadow:0 0 24px rgba(251,191,36,.32)}
+  #ws-library button.btn.ghost{background:var(--panel);color:var(--text)}
+  #ws-library input[type=text]:focus{border-color:var(--amber);box-shadow:0 0 0 3px rgba(251,191,36,.18)}
+  #ws-library .stat .num{background:linear-gradient(120deg,#fff,var(--amber));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .pdel{border:none;background:rgba(255,255,255,.05);color:var(--dim);width:28px;height:28px;border-radius:8px;cursor:pointer;font-size:15px}
+  .pdel:hover{background:rgba(251,113,133,.18);color:var(--red)}
+  .pyear{display:inline-block;font-size:11px;padding:1px 8px;border-radius:10px;background:rgba(251,191,36,.14);color:var(--amber)}
 </style>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"/>
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
@@ -249,6 +306,20 @@
       <p>多轮对话式研究助手，合成式 RAG 回答（公式 / 图 / 引用），长短期记忆，会话可回看。</p>
       <div class="go">进入工作区 <span class="arr">→</span></div>
     </div>
+    <div class="entry digest" id="enter-digest">
+      <span class="tag">DIGEST</span>
+      <div class="ic">📰</div>
+      <h2>每日论文速递</h2>
+      <p>基于你的兴趣画像每天自动拉取 arXiv 新论文并飞书推送。可看推送记录、主动检索、查看画像、自然语言定制兴趣。</p>
+      <div class="go">进入工作区 <span class="arr">→</span></div>
+    </div>
+    <div class="entry library" id="enter-library">
+      <span class="tag">LIBRARY</span>
+      <div class="ic">📚</div>
+      <h2>论文库管理</h2>
+      <p>管理本地论文库：查看库概览与全部论文、单篇删除、本地 PDF 增量入库、基于库内证据的基础问答。</p>
+      <div class="go">进入工作区 <span class="arr">→</span></div>
+    </div>
   </div>
   <div class="foot">
     <span id="health" class="health"><span class="dot"></span><span id="health-txt">检测中…</span></span>
@@ -266,9 +337,6 @@
   <nav>
     <button data-tab="tasks" class="active">任务台</button>
     <button data-tab="artifacts">产物</button>
-    <button data-tab="ask">库内问答</button>
-    <button data-tab="ingest">PDF 入库</button>
-    <button data-tab="arxiv">arXiv 检索<span class="soon">即将上线</span></button>
   </nav>
   <main>
     <section id="tab-tasks" class="tab active">
@@ -303,39 +371,6 @@
         <div class="hint">选择某个已完成任务的综述 / 立场图谱，在下方直接预览。</div>
       </div>
       <iframe id="viewer" class="viewer" title="产物预览"></iframe>
-    </section>
-
-    <section id="tab-ask" class="tab">
-      <div class="panel">
-        <h2>库内问答（基础 RAG）</h2>
-        <div class="row">
-          <input type="text" id="ask-q" placeholder="基于已入库论文提问…"/>
-          <button class="btn" id="btn-ask">检索</button>
-        </div>
-      </div>
-      <div id="ask-results"></div>
-    </section>
-
-    <section id="tab-ingest" class="tab">
-      <div class="panel">
-        <h2>本地 PDF 入库</h2>
-        <div class="row">
-          <input type="text" id="ingest-dir" placeholder="本地 PDF 目录绝对路径，如 /Users/you/papers"/>
-          <button class="btn" id="btn-ingest">入库</button>
-        </div>
-        <div class="hint">增量幂等入库：已入库论文会被跳过（skipped），仅新增（added）。</div>
-      </div>
-      <div id="ingest-result"></div>
-    </section>
-
-    <section id="tab-arxiv" class="tab">
-      <div class="panel">
-        <h2>arXiv 在线检索 <span class="soon">即将上线</span></h2>
-        <div class="empty">
-          该功能尚在设计中。<br/>
-          后端已预留 <code>search_arxiv</code> 工具接口，前端将在此接入 arXiv 检索与一键入库。
-        </div>
-      </div>
     </section>
   </main>
 </div>
@@ -383,6 +418,140 @@
   </div>
 </div>
 
+<!-- ===== 第二层 C: 每日速递工作区 ===== -->
+<div id="ws-digest" class="workspace ws-digest">
+  <div class="topbar">
+    <div class="back" data-home>← 入口</div>
+    <div class="wtitle">📰 每日论文速递 <span class="wbadge">DIGEST</span></div>
+    <span class="health" id="health-d"><span class="dot"></span><span id="health-d-txt">检测中…</span></span>
+  </div>
+  <nav>
+    <button data-dtab="history" class="active">推送记录</button>
+    <button data-dtab="search">主动检索</button>
+    <button data-dtab="profile">我的画像</button>
+    <button data-dtab="interests">定制兴趣</button>
+  </nav>
+  <main>
+    <section id="dtab-history" class="tab active">
+      <div class="panel">
+        <div class="row" style="justify-content:space-between">
+          <h2 style="margin:0">历史推送记录</h2>
+          <div class="row" style="flex:0">
+            <button class="btn" id="btn-digest-run">立即推送一轮</button>
+            <button class="btn ghost" id="btn-digest-refresh">刷新</button>
+          </div>
+        </div>
+        <div class="hint">每天定时把符合你画像的 arXiv 新论文推送到飞书；这里是所有已推送过的论文。</div>
+      </div>
+      <div class="panel">
+        <div id="digest-history"><div class="empty">加载中…</div></div>
+      </div>
+    </section>
+
+    <section id="dtab-search" class="tab">
+      <div class="panel">
+        <h2>主动检索 arXiv 最新论文</h2>
+        <div class="row">
+          <input type="text" id="dg-query" placeholder="输入英文关键词，如：retrieval augmented generation"/>
+          <button class="btn" id="btn-dg-search">检索</button>
+        </div>
+        <div class="hint">直接走每日速递的 arXiv 拉新管道（按提交时间倒序，窗口自动回退），最多展示 20 篇。</div>
+      </div>
+      <div id="dg-search-results"></div>
+    </section>
+
+    <section id="dtab-profile" class="tab">
+      <div class="panel">
+        <div class="row" style="justify-content:space-between">
+          <h2 style="margin:0">我的兴趣画像</h2>
+          <button class="btn ghost" id="btn-profile-refresh">重新分析</button>
+        </div>
+        <div class="hint">从你的提问、综述方向、偏好、精读方法与自定义兴趣里聚类出的研究主题，每天据此找新论文。</div>
+      </div>
+      <div id="digest-profile"><div class="empty">加载中…</div></div>
+    </section>
+
+    <section id="dtab-interests" class="tab">
+      <div class="panel">
+        <h2>自然语言定制兴趣</h2>
+        <div class="row">
+          <input type="text" id="dg-interest" placeholder="用一句话补充你想关注的方向，如：多模态大模型的高效推理"/>
+          <button class="btn" id="btn-add-interest">添加</button>
+        </div>
+        <div class="hint">自定义兴趣会以最高权重并入每日画像（置顶），让推送更懂你。</div>
+      </div>
+      <div class="panel">
+        <h2>已添加的兴趣</h2>
+        <div id="interest-list"><div class="empty">加载中…</div></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ===== 第二层 D: 论文库工作区 ===== -->
+<div id="ws-library" class="workspace ws-library">
+  <div class="topbar">
+    <div class="back" data-home>← 入口</div>
+    <div class="wtitle">📚 论文库管理 <span class="wbadge">LIBRARY</span></div>
+    <span class="health" id="health-l"><span class="dot"></span><span id="health-l-txt">检测中…</span></span>
+  </div>
+  <nav>
+    <button data-ltab="overview" class="active">库概览</button>
+    <button data-ltab="papers">论文清单</button>
+    <button data-ltab="ingest">PDF 入库</button>
+    <button data-ltab="ask">库内问答</button>
+  </nav>
+  <main>
+    <section id="ltab-overview" class="tab active">
+      <div class="panel">
+        <div class="row" style="justify-content:space-between">
+          <h2 style="margin:0">论文库概览</h2>
+          <button class="btn ghost" id="btn-lib-refresh">刷新</button>
+        </div>
+        <div class="stats" id="lib-stats"><div class="empty">加载中…</div></div>
+        <div class="hint">本地论文库以语义片段（chunk）形式存储；入库后即可被综述、问答与速递引用。</div>
+      </div>
+    </section>
+
+    <section id="ltab-papers" class="tab">
+      <div class="panel">
+        <div class="row" style="justify-content:space-between">
+          <h2 style="margin:0">全部论文</h2>
+          <button class="btn ghost" id="btn-papers-refresh">刷新</button>
+        </div>
+        <div class="hint">删除会移除该论文的全部片段并同步检索索引，操作不可撤销。</div>
+      </div>
+      <div class="panel">
+        <div id="papers-list"><div class="empty">加载中…</div></div>
+      </div>
+    </section>
+
+    <section id="ltab-ingest" class="tab">
+      <div class="panel">
+        <h2>本地 PDF 入库</h2>
+        <div class="row">
+          <input type="text" id="ingest-dir" placeholder="本地 PDF 目录绝对路径，如 /Users/you/papers"/>
+          <button class="btn" id="btn-ingest">入库</button>
+        </div>
+        <div class="hint">增量幂等入库：已入库论文会被跳过（skipped），仅新增（added）。</div>
+      </div>
+      <div id="ingest-result"></div>
+    </section>
+
+    <section id="ltab-ask" class="tab">
+      <div class="panel">
+        <h2>库内问答（基础 RAG）</h2>
+        <div class="row">
+          <input type="text" id="ask-q" placeholder="基于已入库论文提问…"/>
+          <button class="btn" id="btn-ask">检索</button>
+        </div>
+        <div class="hint">直接检索库内最相关的片段（不做合成）；需要带引用的合成回答请用 ChatAgent。</div>
+      </div>
+      <div id="ask-results"></div>
+    </section>
+  </main>
+</div>
+
 <div id="toast" class="toast"></div>
 
 <script>
@@ -409,6 +578,8 @@ function enterWorkspace(id){
 }
 $('#enter-research').onclick = () => { enterWorkspace('ws-research'); loadTasks(); };
 $('#enter-chat').onclick = () => { enterWorkspace('ws-chat'); loadSessions(); };
+$('#enter-digest').onclick = () => { enterWorkspace('ws-digest'); loadDigestHistory(); };
+$('#enter-library').onclick = () => { enterWorkspace('ws-library'); loadLibStats(); };
 document.querySelectorAll('[data-home]').forEach(b => b.onclick = goHome);
 
 // ===== 研究工作区标签页 =====
@@ -420,6 +591,29 @@ document.querySelectorAll('#ws-research nav button').forEach(b => b.onclick = ()
   if(b.dataset.tab === 'artifacts') loadArtifactOptions();
 });
 
+// ===== 速递工作区标签页 =====
+document.querySelectorAll('#ws-digest nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#ws-digest nav button').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('#ws-digest .tab').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  $('#dtab-' + b.dataset.dtab).classList.add('active');
+  const t = b.dataset.dtab;
+  if(t === 'history') loadDigestHistory();
+  else if(t === 'profile') loadProfile();
+  else if(t === 'interests') loadInterests();
+});
+
+// ===== 论文库工作区标签页 =====
+document.querySelectorAll('#ws-library nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#ws-library nav button').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('#ws-library .tab').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  $('#ltab-' + b.dataset.ltab).classList.add('active');
+  const t = b.dataset.ltab;
+  if(t === 'overview') loadLibStats();
+  else if(t === 'papers') loadPapers();
+});
+
 // ===== 健康检查 (三处指示灯同步) =====
 async function checkHealth(){
   let cls, txt;
@@ -427,7 +621,7 @@ async function checkHealth(){
     cls = 'health ' + (h.status === 'ok' ? 'ok' : 'bad');
     txt = `库内 ${h.chunks} chunks · ${h.status}`;
   }catch(e){ cls='health bad'; txt='后端不可达'; }
-  [['#health','#health-txt'],['#health-r','#health-r-txt'],['#health-c','#health-c-txt']].forEach(([a,b])=>{
+  [['#health','#health-txt'],['#health-r','#health-r-txt'],['#health-c','#health-c-txt'],['#health-d','#health-d-txt'],['#health-l','#health-l-txt']].forEach(([a,b])=>{
     const el=$(a); if(el){ el.className=cls; $(b).textContent=txt; }
   });
 }
@@ -797,6 +991,189 @@ function toggleRef(tid, n){
   el.classList.toggle('open');
   const btn = el.querySelector('.rtoggle');
   if(btn) btn.textContent = el.classList.contains('open') ? '收起原文 ▴' : '展开原文 ▾';
+}
+
+// ===== 每日速递工作区 =====
+function fmtDate(ts){
+  if(!ts) return '';
+  const d = new Date(ts * 1000);
+  return d.toLocaleString('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});
+}
+
+// —— 推送记录 ——
+async function loadDigestHistory(){
+  const box = $('#digest-history');
+  box.innerHTML = '<div class="empty">加载中…</div>';
+  try{
+    const d = await api('/digest/history?limit=200');
+    if(!d.items.length){ box.innerHTML = '<div class="empty">还没有推送记录。点上方「立即推送一轮」试试。</div>'; return; }
+    box.innerHTML = '<table><thead><tr><th>论文</th><th>主题</th><th>推送时间</th></tr></thead><tbody>' +
+      d.items.map(p => `<tr class="clickable" onclick="window.open('${esc(p.url)}','_blank')">
+        <td>${esc(p.title||p.arxiv_id)}</td>
+        <td><span class="sgtag">${esc(p.topic||'-')}</span></td>
+        <td style="color:var(--dim);white-space:nowrap">${fmtDate(p.pushed_at)}</td></tr>`).join('') +
+      `</tbody></table><div class="hint">共 ${d.total} 篇 · 点击行打开 arXiv 原文</div>`;
+  }catch(e){ box.innerHTML = `<div class="empty">加载失败: ${esc(e.message)}</div>`; }
+}
+$('#btn-digest-refresh').onclick = loadDigestHistory;
+$('#btn-digest-run').onclick = async () => {
+  $('#btn-digest-run').disabled = true;
+  toast('正在生成并推送速递，请稍候…');
+  try{
+    const r = await api('/digest/run', {method:'POST'});
+    const n = (r.groups||[]).reduce((s,g)=>s+(g.papers?g.papers.length:0),0);
+    toast(r.ok ? `推送完成，共 ${n} 篇` : ('推送失败: ' + (r.error||'未知')));
+    loadDigestHistory();
+  }catch(e){ toast('推送失败: ' + e.message); }
+  finally{ $('#btn-digest-run').disabled = false; }
+};
+
+// —— 主动检索 ——
+function renderPapers(items){
+  if(!items.length) return '<div class="empty">无命中，换个关键词试试。</div>';
+  return items.map(p => `<div class="dgpaper">
+    <div class="pt"><a href="${esc(p.url)}" target="_blank">${esc(p.title)}</a></div>
+    <div class="pm">
+      <span>${esc((p.authors||[]).slice(0,3).join(', '))}${(p.authors||[]).length>3?' 等':''}</span>
+      ${p.categories&&p.categories.length?`<span class="pcat">${esc(p.categories.slice(0,3).join(' / '))}</span>`:''}
+      ${p.published?`<span>${esc(p.published.slice(0,10))}</span>`:''}
+    </div>
+    <div class="ps">${esc(p.summary||'')}</div>
+  </div>`).join('');
+}
+async function searchArxiv(){
+  const q = $('#dg-query').value.trim();
+  if(!q){ toast('请输入关键词'); return; }
+  const box = $('#dg-search-results');
+  box.innerHTML = '<div class="empty">检索中…</div>';
+  $('#btn-dg-search').disabled = true;
+  try{
+    const d = await api('/digest/search', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({query:q})});
+    box.innerHTML = `<div class="panel"><h2>检索结果 · ${d.total} 篇</h2>${renderPapers(d.items)}</div>`;
+  }catch(e){ box.innerHTML = `<div class="empty">检索失败: ${esc(e.message)}</div>`; }
+  finally{ $('#btn-dg-search').disabled = false; }
+}
+$('#btn-dg-search').onclick = searchArxiv;
+$('#dg-query').addEventListener('keydown', e => { if(e.key==='Enter') searchArxiv(); });
+
+// —— 我的画像 ——
+async function loadProfile(){
+  const box = $('#digest-profile');
+  box.innerHTML = '<div class="empty">正在分析你的兴趣画像…</div>';
+  try{
+    const d = await api('/digest/profile');
+    if(!d.signal_count){
+      box.innerHTML = '<div class="panel"><div class="empty">还没有足够的兴趣信号。先去问答 / 发起综述 / 添加自定义兴趣吧。</div></div>';
+      return;
+    }
+    const topics = (d.topics||[]).map(t => `<div class="topic-chip">
+      <div class="tn">🎯 ${esc(t.name)}</div>
+      <div class="tq">arXiv 检索词: ${esc(t.query)}</div>
+      ${t.reason?`<div class="tr">${esc(t.reason)}</div>`:''}
+      <a class="tgo" href="/digest/deepdive?topic=${encodeURIComponent(t.name)}">一键深度综述 →</a>
+    </div>`).join('') || '<div class="empty">未聚类出主题</div>';
+    const maxc = Math.max(1, ...(d.sources||[]).map(s=>s.count));
+    const srcs = (d.sources||[]).map(s => `<div class="srcbar">
+      <span class="sn">${esc(s.label)}</span>
+      <span class="sbar"><i style="width:${Math.round(s.count/maxc*100)}%"></i></span>
+      <span class="sc">${s.count}</span></div>`).join('');
+    const sigs = (d.top_signals||[]).map(s => `<div class="sig">
+      <span class="sgtag">${esc(s.label)}</span>
+      <span class="sgtxt" title="${esc(s.text)}">${esc(s.text)}</span>
+      <span class="sgw">权重 ${s.weight}</span></div>`).join('');
+    box.innerHTML = `
+      <div class="panel"><h2>兴趣主题（每天据此找新论文）</h2>${topics}</div>
+      <div class="panel"><h2>信号来源分布 · 共 ${d.signal_count} 条</h2><div class="srcbars">${srcs}</div></div>
+      <div class="panel"><h2>权重最高的兴趣信号（体现"懂你"）</h2>${sigs||'<div class="empty">无</div>'}</div>`;
+  }catch(e){ box.innerHTML = `<div class="empty">加载失败: ${esc(e.message)}</div>`; }
+}
+$('#btn-profile-refresh').onclick = loadProfile;
+
+// —— 定制兴趣 ——
+async function loadInterests(){
+  const box = $('#interest-list');
+  box.innerHTML = '<div class="empty">加载中…</div>';
+  try{
+    const d = await api('/digest/interests');
+    if(!d.items.length){ box.innerHTML = '<div class="empty">还没有自定义兴趣，上方添加一条吧。</div>'; return; }
+    box.innerHTML = '<div class="ilist">' + d.items.map(it => `<div class="iitem">
+      <span class="it">${esc(it.text)}</span>
+      <span class="idt">${fmtDate(it.created_at)}</span>
+      <button class="idel" title="删除" data-id="${esc(it.id)}">×</button></div>`).join('') + '</div>';
+    box.querySelectorAll('.idel').forEach(b => b.onclick = () => deleteInterest(b.dataset.id));
+  }catch(e){ box.innerHTML = `<div class="empty">加载失败: ${esc(e.message)}</div>`; }
+}
+async function addInterest(){
+  const inp = $('#dg-interest');
+  const text = inp.value.trim();
+  if(!text){ toast('请输入兴趣描述'); return; }
+  $('#btn-add-interest').disabled = true;
+  try{
+    await api('/digest/interests', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({text})});
+    inp.value = '';
+    toast('已添加，将并入下次画像');
+    loadInterests();
+  }catch(e){ toast('添加失败: ' + e.message); }
+  finally{ $('#btn-add-interest').disabled = false; }
+}
+async function deleteInterest(id){
+  if(!confirm('删除这条自定义兴趣？')) return;
+  try{
+    await api('/digest/interests/' + encodeURIComponent(id), {method:'DELETE'});
+    toast('已删除');
+    loadInterests();
+  }catch(e){ toast('删除失败: ' + e.message); }
+}
+$('#btn-add-interest').onclick = addInterest;
+$('#dg-interest').addEventListener('keydown', e => { if(e.key==='Enter') addInterest(); });
+
+// ===== 论文库工作区 =====
+let libCache = null;
+async function loadLibStats(){
+  const box = $('#lib-stats');
+  box.innerHTML = '<div class="empty">加载中…</div>';
+  try{
+    const d = await api('/papers');
+    libCache = d;
+    const avg = d.total ? Math.round(d.chunks / d.total) : 0;
+    box.innerHTML = `
+      <div class="stat"><span class="num">${d.total}</span><span class="lbl">论文总数</span></div>
+      <div class="stat"><span class="num">${d.chunks}</span><span class="lbl">语义片段</span></div>
+      <div class="stat"><span class="num">${avg}</span><span class="lbl">篇均片段</span></div>`;
+  }catch(e){ box.innerHTML = `<div class="empty">加载失败: ${esc(e.message)}</div>`; }
+}
+$('#btn-lib-refresh').onclick = loadLibStats;
+
+async function loadPapers(){
+  const box = $('#papers-list');
+  box.innerHTML = '<div class="empty">加载中…</div>';
+  try{
+    const d = await api('/papers');
+    libCache = d;
+    if(!d.items.length){ box.innerHTML = '<div class="empty">论文库为空，去「PDF 入库」添加吧。</div>'; return; }
+    box.innerHTML = '<table><thead><tr><th>标题</th><th>年份</th><th>片段</th><th></th></tr></thead><tbody>' +
+      d.items.map(p => `<tr>
+        <td>${esc(p.title)}</td>
+        <td>${p.year ? `<span class="pyear">${p.year}</span>` : '<span style="color:var(--dim)">—</span>'}</td>
+        <td style="color:var(--muted)">${p.chunks}</td>
+        <td style="text-align:right"><button class="pdel" title="删除" data-id="${esc(p.paper_id)}" data-title="${esc(p.title)}">×</button></td>
+      </tr>`).join('') +
+      `</tbody></table><div class="hint">共 ${d.total} 篇 · ${d.chunks} 个片段</div>`;
+    box.querySelectorAll('.pdel').forEach(b => b.onclick = () => deletePaper(b.dataset.id, b.dataset.title));
+  }catch(e){ box.innerHTML = `<div class="empty">加载失败: ${esc(e.message)}</div>`; }
+}
+$('#btn-papers-refresh').onclick = loadPapers;
+
+async function deletePaper(id, title){
+  if(!confirm(`确认从论文库删除《${title}》？\n该论文的全部片段会被移除，操作不可撤销。`)) return;
+  try{
+    const r = await api('/papers/' + encodeURIComponent(id), {method:'DELETE'});
+    toast(`已删除，移除 ${r.removed_chunks} 个片段`);
+    loadPapers();
+    checkHealth();
+  }catch(e){ toast('删除失败: ' + e.message); }
 }
 
 // ===== 初始化 =====
