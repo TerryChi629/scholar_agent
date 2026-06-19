@@ -54,9 +54,10 @@ class CriticAgent(BaseAgent):
         #   2b) 再查非空但回溯不到的 quote (疑似幻觉)
         unverifiable = self._verify_evidence(bb)
         if unverifiable:
+            preview = [x["quote"][:50] for x in unverifiable[:3]]
             issues.append(
                 f"引用真实性: {len(unverifiable)} 条 evidence_spans 无法在原文中回溯 (疑似幻觉): "
-                f"{unverifiable[:3]}{'...' if len(unverifiable) > 3 else ''}"
+                f"{preview}{'...' if len(unverifiable) > 3 else ''}"
             )
             suggestions.append("对无法回溯引用的论文重新精读, 要求 quote 必须摘自原文。")
 
@@ -83,8 +84,15 @@ class CriticAgent(BaseAgent):
             suggestions.append("以下卡片疑似套话/跨篇雷同, 建议重读以提升区分度: "
                                + "; ".join(warnings[:3]))
 
-        verdict = {"passed": passed, "issues": issues, "suggestions": suggestions,
-                   "warnings": warnings, "method": "deterministic"}
+        verdict = {
+            "passed": passed,
+            "issues": issues,
+            "suggestions": suggestions,
+            "warnings": warnings,
+            "method": "deterministic",
+            "empty_evidence_cards": empty_ev,
+            "unverifiable_evidence": unverifiable,
+        }
         bb.critic_feedback.append(verdict)
         if on_step:
             on_step({"round": 0, "type": "final",
@@ -133,23 +141,23 @@ class CriticAgent(BaseAgent):
         return warns
 
     @staticmethod
-    def _verify_evidence(bb: Blackboard, max_per_card: int = 3) -> list[str]:
+    def _verify_evidence(bb: Blackboard, max_per_card: int = 3) -> list[dict]:
         """回查每张卡片的 evidence_spans: quote 能否在库内该论文检索命中。
 
-        返回无法回溯的 quote 列表 (截断的描述)。检索命中判据: 取该论文 top1 片段,
+        返回无法回溯的 quote 列表 (含 paper_id)。检索命中判据: 取该论文 top1 片段,
         与 quote 有足够的词重叠 (宽松匹配, 避免标点/分块差异误杀)。
         """
         from rag.retrieve import hybrid_search
         from tools import _spans_to_quotes
 
-        bad: list[str] = []
+        bad: list[dict] = []
         for pid, card in bb.cards.items():
             for quote in _spans_to_quotes(card.evidence_spans)[:max_per_card]:
                 if len(quote) < 8:  # 太短不具回溯意义, 跳过
                     continue
                 hits = hybrid_search(quote, top_k=1, paper_id=pid)
                 if not hits or not _overlap_ok(quote, hits[0].text):
-                    bad.append(quote[:50])
+                    bad.append({"paper_id": pid, "quote": quote})
         return bad
 
 

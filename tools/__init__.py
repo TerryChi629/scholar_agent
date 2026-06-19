@@ -199,17 +199,27 @@ def _llm_name_titles(titles: list[str]) -> dict[str, str]:
 def _spans_to_quotes(spans) -> list:
     """把 evidence_spans 规整为 quote 字符串列表。
 
-    Reader 输出的 span 可能是 {quote, page, ...} dict, 也可能是裸字符串, 这里统一兼容。
+    Reader 输出的 span 可能是 {quote, page, ...} / {text, source, ...} dict,
+    也可能是裸字符串, 这里统一兼容。历史任务里曾出现 text=原文、quote=中文译文
+    或只有 text 的情况, 回查应优先使用可回溯原文。
     """
     out: list[str] = []
     for s in spans or []:
         if isinstance(s, dict):
             q = (s.get("quote") or "").strip()
+            text = (s.get("text") or "").strip()
+            if text and (not q or (_has_cjk(q) and not _has_cjk(text))):
+                q = text
         else:
             q = str(s).strip()
         if q:
             out.append(q)
     return out
+
+
+def _has_cjk(text: str) -> bool:
+    import re
+    return bool(re.search(r"[\u4e00-\u9fff]", text or ""))
 
 
 @tool

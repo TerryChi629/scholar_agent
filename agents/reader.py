@@ -36,11 +36,12 @@ class ReaderAgent(BaseAgent):
         "禁止把整句英文描述塞进 opposes。\n"
         "重要: 已为你预取了该论文若干关键片段 (见 user 消息); 如需补充细节, "
         "调用 rag_query 时无需再传 paper_id (系统已自动锁定本篇)。\n"
-        "evidence_spans 必须包含可回溯的原文片段 (quote), 供后续引用核对。"
+        "evidence_spans 必须包含可回溯的原文片段: 每项形如 {quote, page}, "
+        "quote 必须逐字复制论文原文, 禁止翻译/改写/总结; 中文解释只写在其他字段。"
     )
     tools = ["rag_query"]
 
-    def run_for(self, bb: Blackboard, paper_id: str, on_step=None):
+    def run_for(self, bb: Blackboard, paper_id: str, on_step=None, force: bool = False):
         """对单篇论文运行精读。
 
         三段式命中策略 (从快到慢):
@@ -49,7 +50,7 @@ class ReaderAgent(BaseAgent):
         3) 均未命中 -> 4 维预检索注入 + 完整 loop 精读。
         """
         existing = bb.cards.get(paper_id)
-        if existing and existing.core_claim:
+        if existing and existing.core_claim and not force:
             from core.obs import log_event
             log_event("reader.card_reuse", agent="reader", paper_id=paper_id)
             return None
@@ -57,7 +58,7 @@ class ReaderAgent(BaseAgent):
         from core.run_context import set_reader_paper_id
         set_reader_paper_id(paper_id)  # 锁定本线程精读论文, rag_query 自动注入 paper_id
         try:
-            if self._try_memory(bb, paper_id, on_step):  # 2) 跨任务记忆命中
+            if not force and self._try_memory(bb, paper_id, on_step):  # 2) 跨任务记忆命中
                 return None
             # 3) 完整精读
             excerpts = self._pre_retrieve(paper_id)
@@ -208,6 +209,8 @@ class ReaderAgent(BaseAgent):
                 continue
             if k in _LIST_FIELDS and not isinstance(v, list):
                 v = [v] if v else []
+            if k == "evidence_spans":
+                v = _normalize_evidence_spans(v)
             if k == "year":
                 try:
                     v = int(v)
@@ -231,3 +234,34 @@ def bb_store_meta(paper_id: str) -> dict:
     """查库内该论文的真实元数据 {title, year}; 查不到返回空。"""
     from rag.store import get_store
     return get_store().list_papers().get(paper_id, {})
+
+
+def _normalize_evidence_spans(spans) -> list[dict]:
+    """把模型输出的 evidence_spans 规整为 {quote, ...}。
+
+    兼容历史/弱模型常见格式:
+    - {text: 原文, source: 维度} 没有 quote;
+    - {text: 原文, quote: 中文译文} quote 不可回溯, 应优先保留 text 作为 quote。
+    """
+    out: list[dict] = []
+    for s in spans or []:
+        if isinstance(s, dict):
+            quote = str(s.get("quote") or "").strip()
+            text = str(s.get("text") or "").strip()
+            # 若 quote 是中文译文而 text 更像英文原文, 用 text 做可回溯 quote。
+            if text and (not quote or (_has_cjk(quote) and not _has_cjk(text))):
+                quote = text
+            if not quote:
+                continue
+            item = {k: v for k, v in s.items() if k != "text"}
+            item["quote"] = quote
+            out.append(item)
+        else:
+            quote = str(s).strip()
+            if quote:
+                out.append({"quote": quote})
+    return out
+
+
+def _has_cjk(text: str) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", text or ""))

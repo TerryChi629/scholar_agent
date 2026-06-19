@@ -232,7 +232,7 @@ class Orchestrator:
         except Exception:  # noqa: BLE001  通知失败不应中断任务
             pass
 
-    def _read_parallel(self, bb: Blackboard, paper_ids: list[str]) -> None:
+    def _read_parallel(self, bb: Blackboard, paper_ids: list[str], force: bool = False) -> None:
         """并行精读多篇论文。Reader 各自只调 rag_query, 互不共享状态, 线程安全。
 
         写黑板 cards 字典为各自独立 key, 无写冲突。并发度受 reader_concurrency 限制。
@@ -242,10 +242,10 @@ class Orchestrator:
         workers = max(1, min(settings.reader_concurrency, len(paper_ids)))
         if workers == 1:
             for pid in paper_ids:
-                self.reader.run_for(bb, pid, self.on_step)
+                self.reader.run_for(bb, pid, self.on_step, force=force)
             return
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(self.reader.run_for, bb, pid, self.on_step): pid
+            futures = {pool.submit(self.reader.run_for, bb, pid, self.on_step, force=force): pid
                        for pid in paper_ids}
             for fut in as_completed(futures):
                 fut.result()  # 抛出子线程异常, 便于上层感知
@@ -262,7 +262,27 @@ class Orchestrator:
         if missing:
             self._read_parallel(bb, missing)
             acted = True
+        # 引用真实性: 卡片存在但证据为空/不可回溯 -> 强制重读坏卡片。
+        elif bad_evidence := self._bad_evidence_papers(bb):
+            self._read_parallel(bb, bad_evidence, force=True)
+            acted = True
         # 图谱缺失 -> 让图边流转回 synthesize 重建图谱。
         elif bb.graph is None or not bb.graph.nodes:
             acted = True
         return acted
+
+    @staticmethod
+    def _bad_evidence_papers(bb: Blackboard) -> list[str]:
+        """从最近一次 Critic feedback 中提取需要重读的论文。"""
+        if not bb.critic_feedback:
+            return []
+        fb = bb.critic_feedback[-1]
+        pids: list[str] = []
+        for pid in fb.get("empty_evidence_cards") or []:
+            if pid in bb.cards and pid not in pids:
+                pids.append(pid)
+        for item in fb.get("unverifiable_evidence") or []:
+            pid = item.get("paper_id") if isinstance(item, dict) else None
+            if pid in bb.cards and pid not in pids:
+                pids.append(pid)
+        return pids
