@@ -385,6 +385,20 @@ ChatAgent.answer(question)
 - 推荐表述：「我们没有直接接 LangGraph 依赖，但实现了 LangGraph-style 的轻量状态图编排：节点是 Retriever/Reader/Synthesizer/Critic，边表达条件流转，Blackboard 是共享状态。」
 - 不要说「用了 LangGraph 框架」；应说「借鉴 LangGraph 的 StateGraph 思想，自研轻量运行时」，这样既诚实也能体现工程取舍。
 
+#### M11.4 前端调度可视化
+
+- `Blackboard.graph_events` 持久化 StateGraph 轨迹：节点、事件(start/done/route)、状态、候选/卡片/图谱/产物/token 快照。
+- `/tasks/{task_id}` 返回 `plan`、`graph_events`、`critic_feedback`，供前端轮询展示。
+- `web/index.html` 的任务详情渲染「StateGraph Agent 调度」：Plan/Retriever/Reader/Synthesizer/Critic/Done 节点状态 + 事件时间线，便于演示 multi-agent 编排过程。
+
+#### M11.5 GLM low 试跑与稳定性修复
+
+- `core/llm.py` 的 OpenAI 兼容 client 必须设置 `timeout=settings.llm_timeout`：默认 chat client、按 provider 懒加载 client、embedding client 三处都要覆盖。否则单次 API 请求可能无限挂起，既有 `_retry_call` 无法捕获异常，自然不会重试。
+- “依然只用 GLM”试跑时可通过环境变量强制所有 Agent 走 low 档：`LLM_PROVIDER=glm` + `AGENT_MODEL_RETRIEVER/READER/SYNTHESIZER/CRITIC=low` + `AGENT_MODEL_CHAT=low`。指定 model 的分发路径只在同配置模型上重试，不跨厂降级，避免误切 DeepSeek。
+- 本地 cross-encoder 精排在小机器/CPU 上可能成为演示瓶颈。本次 GLM low 全链路演示按决策临时使用 `RERANK_ENABLED=0`；后续若重新开启，应限制进入 cross-encoder 的候选数，避免对全库候选做重排。
+- `RetrieverAgent.apply_result` 只需要聚合候选 `paper_id`，不应把 `hybrid_search` 的 `top_k` 放大到接近全库规模；当前硬上限 150，避免下游 MMR + 父文档扩展对全库空转。
+- 已验证任务 `6fca2ec0`（topic: 生成式推荐系统）在 GLM low 下完整完成：8 篇候选/8 张卡片/15 个图谱节点/3 个产物/24590 tokens，前端 StateGraph 调度可视化正常展示。
+
 ---
 
 ## 7. 编码规范

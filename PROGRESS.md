@@ -390,6 +390,23 @@
 
 ---
 
+### 阶段 24：M11 前端调度可视化 + GLM low 全链路试跑
+
+> 背景：用户决定既然 StateGraph-style 编排没有问题，就把 multi-agent 调度过程也做成前端可视化，并用 GLM 免费/低档完整跑一次任务。
+
+- 🤖 **编排轨迹持久化（`core/blackboard.py` + `agents/orchestrator.py`）**：`Blackboard` 新增 `graph_events`；Orchestrator 在 `plan/retrieve/read/synthesize/review/reschedule/remember/done` 节点写入 start/done/route 事件，记录时间、节点、事件类型、说明、候选数、卡片数、图谱节点数、产物数、token 快照；耗时节点 start 后立即 checkpoint，前端轮询时能看到 running 状态
+- 🤖 **任务详情接口（`interfaces/api.py`）**：`GET /tasks/{task_id}` 新增返回 `plan`、`graph_events`、`critic_feedback`，用于前端实时可视化
+- 🤖 **前端可视化（`web/index.html`）**：任务详情新增「StateGraph Agent 调度」模块：Plan / Retriever / Reader / Synthesizer / Critic / Done 节点卡片 + 事件时间线；状态支持 pending/running/done；保留 tokens/卡片/图谱/产物统计
+- 🤖 **运行策略**：全链路试跑时使用 GLM low/free 档（`LLM_PROVIDER=glm` + `AGENT_MODEL_RETRIEVER/READER/SYNTHESIZER/CRITIC=low`），验证成本可控场景下的完整任务闭环
+- 🤖 **重试真正可触发（`core/llm.py` + `config.py`）**：排查首轮试跑卡在 `retrieve`，确认不是 GLM token 用完，而是 OpenAI client 未设置 timeout，单次请求可能无限挂起，导致 `_retry_call` 没机会捕获异常；给 chat 默认 client、按 provider 懒加载 client、embedding client 三处统一加 `timeout=settings.llm_timeout`（默认 60s），超时后抛 `APITimeoutError` 并进入既有指数退避重试
+- 🤖 **性能瓶颈分层修复（`agents/retriever.py`）**：第二轮卡在本地 cross-encoder 对 755 候选全量重排，按用户决策本次试跑关闭 `RERANK_ENABLED=0`；第三轮继续卡在 `RetrieverAgent.apply_result` 的超大 `top_k`，将候选池从近全库规模收敛为 `min(max(len(valid_ids) * 4, 60), 150)`，避免下游 MMR + 父文档扩展对全库做重活
+- 🤖 **GLM low 完整验证（端口 8011）**：用 `生成式推荐系统` 发起任务 `6fca2ec0`，最终状态 `done`、无 error；链路为 `plan -> retrieve(候选 8 篇) -> read(论文卡片 8 张) -> synthesize(图谱节点 15 个 / 产物 3 个) -> review(未通过) -> reschedule(无可补救动作) -> done`，总 tokens 24590
+- 🤖 **前端演示验证**：浏览器打开 `http://127.0.0.1:8011/`，进入论文综述工作区并加载任务 `6fca2ec0`，确认「StateGraph Agent 调度」状态轨道与事件时间线正常渲染；统计卡片显示 8 论文卡片 / 15 图谱节点 / 24590 tokens / 3 产物
+
+> ✅ 达成：StateGraph 调度过程可在前端实时/回看展示；GLM low 档完成全流程试跑；请求超时后能触发重试，不再因单次 API 挂起卡死；检索候选池收敛后避免本地重排和 MMR 对全库空转。
+
+---
+
 ## 你（👤）需要本人完成的配置
 
 ### 1. 填入 LLM + Embedding API key（必需）

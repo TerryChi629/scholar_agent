@@ -5,7 +5,8 @@
 - 上层只调 chat() / embed(), 不关心底层是谁。
 
 M4 工程化:
-- 稳定性: chat/embed 对 429 限流与 5xx 服务端错误做指数退避重试。
+- 稳定性: chat/embed 对 429 限流与 5xx 服务端错误做指数退避重试; client 设请求超时
+  (settings.llm_timeout), 避免单次请求无限挂起导致整条链卡死 (超时会抛 APITimeoutError 进而触发重试/降级)。
 - 限流: 客户端最小请求间隔 (settings.llm_min_interval), 防止打爆配额。
 - 高可用: chat 主模型重试耗尽后, 降级到 settings.fallback_chat_model 兜底。
 - 可观测: 重试/降级动作经 core.obs.log_event 落结构化日志。
@@ -90,14 +91,14 @@ class LLM:
         # provider -> OpenAI client 池 (同厂复用一个 client, 跨厂各持一个)
         self._clients: dict[str, OpenAI] = {}
         key, base_url = settings.chat_credentials()
-        self._clients[self._provider] = OpenAI(api_key=key, base_url=base_url)
+        self._clients[self._provider] = OpenAI(api_key=key, base_url=base_url, timeout=settings.llm_timeout)
 
     def _client_for(self, provider: str) -> OpenAI:
         """取/建指定 provider 的 client (懒加载, 进程内缓存)。"""
         client = self._clients.get(provider)
         if client is None:
             key, base_url = settings.credentials_for(provider)
-            client = OpenAI(api_key=key, base_url=base_url)
+            client = OpenAI(api_key=key, base_url=base_url, timeout=settings.llm_timeout)
             self._clients[provider] = client
         return client
 
@@ -226,7 +227,7 @@ class APIEmbedder(Embedder):
     _BATCH_SIZE = 64
 
     def __init__(self) -> None:
-        self._client = OpenAI(api_key=settings.embed_api_key, base_url=settings.embed_base_url)
+        self._client = OpenAI(api_key=settings.embed_api_key, base_url=settings.embed_base_url, timeout=settings.llm_timeout)
         self._model = settings.embed_model
         self._limiter = _RateLimiter(settings.llm_min_interval)
 

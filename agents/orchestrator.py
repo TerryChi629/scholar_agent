@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 
 from core.blackboard import Blackboard, Status, SubTask
 from core.harness import save_checkpoint
@@ -31,7 +32,6 @@ class Orchestrator:
     def run(self, bb: Blackboard) -> Blackboard:
         # 工具需要读黑板做确定性计算 (cluster/build_graph), 注册当前任务上下文
         set_active_blackboard(bb)
-        import time
         _t0 = time.time()
         try:
             self._critic_passed = False
@@ -78,54 +78,116 @@ class Orchestrator:
         return graph
 
     def _node_plan(self, bb: Blackboard) -> None:
+        self._event(bb, "plan", "start", "生成 StateGraph 执行计划")
         bb.plan = [
             SubTask("retrieve"), SubTask("read"),
             SubTask("synthesize"), SubTask("review"),
         ]
         bb.status = Status.RETRIEVING.value
+        self._set_step(bb, "retrieve", "pending")
+        self._set_step(bb, "read", "pending")
+        self._set_step(bb, "synthesize", "pending")
+        self._set_step(bb, "review", "pending")
+        self._event(bb, "plan", "done", "计划: retrieve -> read -> synthesize -> review")
         save_checkpoint(bb)
 
     def _node_retrieve(self, bb: Blackboard) -> None:
+        self._set_step(bb, "retrieve", "running")
+        self._event(bb, "retrieve", "start", "RetrieverAgent 开始扩展查询并召回候选论文")
+        save_checkpoint(bb)
         self.retriever.run(bb, self.on_step)
+        self._set_step(bb, "retrieve", "done", f"候选论文 {len(bb.candidates)} 篇")
+        self._event(bb, "retrieve", "done", f"候选论文 {len(bb.candidates)} 篇")
         bb.status = Status.READING.value
         save_checkpoint(bb)
 
     def _node_read(self, bb: Blackboard) -> None:
+        self._set_step(bb, "read", "running")
+        self._event(bb, "read", "start", f"ReaderAgent 并行精读 {len(bb.candidates)} 篇候选论文")
+        save_checkpoint(bb)
         self._read_parallel(bb, bb.candidates)
+        self._set_step(bb, "read", "done", f"论文卡片 {len(bb.cards)} 张")
+        self._event(bb, "read", "done", f"论文卡片 {len(bb.cards)} 张")
         bb.status = Status.SYNTHESIZING.value
         save_checkpoint(bb)
 
     def _node_synthesize(self, bb: Blackboard) -> None:
+        self._set_step(bb, "synthesize", "running")
+        self._event(bb, "synthesize", "start", "SynthesizerAgent 开始建图并生成综述")
+        save_checkpoint(bb)
         self.synthesizer.run(bb, self.on_step)
+        nodes = len(bb.graph.nodes) if bb.graph else 0
+        self._set_step(bb, "synthesize", "done", f"图谱节点 {nodes} 个")
+        self._event(bb, "synthesize", "done", f"图谱节点 {nodes} 个, 产物 {len(bb.artifacts)} 个")
         bb.status = Status.REVIEWING.value
         save_checkpoint(bb)
 
     def _node_review(self, bb: Blackboard) -> None:
+        self._set_step(bb, "review", "running")
         self._critic_attempts += 1
+        self._event(bb, "review", "start", f"CriticAgent 第 {self._critic_attempts} 次质量检查")
+        save_checkpoint(bb)
         self._critic_passed = self.critic.review(bb, self.on_step)
+        note = "通过" if self._critic_passed else "未通过"
+        self._set_step(bb, "review", "done" if self._critic_passed else "running", note)
+        self._event(bb, "review", "done", f"Critic {note}")
 
     def _route_after_review(self, bb: Blackboard) -> str:
         if self._critic_passed:
+            self._event(bb, "review", "route", "pass -> remember")
             return "pass"
         if self._critic_attempts <= settings.critic_max_retry:
+            self._event(bb, "review", "route", "retry -> reschedule")
             return "retry"
+        self._event(bb, "review", "route", "finish -> done (重试次数耗尽)")
         return "finish"
 
     def _node_reschedule(self, bb: Blackboard) -> None:
         # 不通过: 依据反馈定向重调度; 若无可补救动作则不再空转重试
+        self._event(bb, "reschedule", "start", "根据 Critic 反馈定向补救")
         self._rescheduled = self._reschedule(bb)
+        note = "已补救, 回到 synthesize" if self._rescheduled else "无可补救动作, 结束流程"
+        self._event(bb, "reschedule", "done", note)
         save_checkpoint(bb)
 
     def _route_after_reschedule(self, bb: Blackboard) -> str:
-        return "retry" if self._rescheduled else "finish"
+        route = "retry" if self._rescheduled else "finish"
+        self._event(bb, "reschedule", "route", f"{route} -> {'synthesize' if route == 'retry' else 'done'}")
+        return route
 
     def _node_remember(self, bb: Blackboard) -> None:
         # 质量闸门: 仅当 Critic 通过时, 才把卡片沉淀进跨任务记忆 (杜绝低质固化)
+        self._event(bb, "remember", "start", "Critic 通过, 写入 card memory")
         self._remember_cards(bb)
+        self._event(bb, "remember", "done", "card memory 写入完成")
 
     def _node_done(self, bb: Blackboard) -> None:
         bb.status = Status.DONE.value
+        self._event(bb, "done", "done", "任务完成")
         save_checkpoint(bb)
+
+    @staticmethod
+    def _set_step(bb: Blackboard, name: str, status: str, note: str = "") -> None:
+        for st in bb.plan:
+            if st.name == name:
+                st.status = status
+                st.note = note or st.note
+                return
+
+    @staticmethod
+    def _event(bb: Blackboard, node: str, event: str, note: str = "") -> None:
+        bb.graph_events.append({
+            "ts": round(time.time(), 3),
+            "node": node,
+            "event": event,
+            "status": bb.status,
+            "note": note,
+            "candidates": len(bb.candidates),
+            "cards": len(bb.cards),
+            "nodes": len(bb.graph.nodes) if bb.graph else 0,
+            "artifacts": len(bb.artifacts),
+            "tokens": bb.usage.get("total_tokens", 0),
+        })
 
     @staticmethod
     def _remember_cards(bb: Blackboard) -> None:

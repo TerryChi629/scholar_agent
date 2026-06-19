@@ -52,6 +52,8 @@ class Settings:
     llm_max_retries: int = field(default_factory=lambda: int(_get("LLM_MAX_RETRIES", "3")))
     llm_backoff_base: float = field(default_factory=lambda: float(_get("LLM_BACKOFF_BASE", "1.0")))
     llm_min_interval: float = field(default_factory=lambda: float(_get("LLM_MIN_INTERVAL", "0.0")))
+    # 单次请求超时 (秒): 缺省会让挂起的请求无限等待, 必须有上限才能触发重试/降级。
+    llm_timeout: float = field(default_factory=lambda: float(_get("LLM_TIMEOUT", "60")))
 
     # —— M4 成本: 缓存开关与 TTL ——
     cache_enabled: bool = field(default_factory=lambda: _get("CACHE_ENABLED", "1") not in ("0", "false", "False"))

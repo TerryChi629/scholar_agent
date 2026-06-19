@@ -44,8 +44,10 @@ class RetrieverAgent(BaseAgent):
         )
         named = [pid for pid in _PAPER_ID_RE.findall(text_pool) if pid in valid_ids]
 
-        # 2) 对 topic 检索一个较大的 chunk 池, 按论文聚合 (取每篇最佳得分) 后排序
-        pool = hybrid_search(bb.topic, top_k=max(len(valid_ids) * 30, 60))
+        # 2) 对 topic 检索一个候选池, 按论文聚合 (取每篇最佳得分) 后排序。
+        #    只为聚合出候选 paper_id, 不需要全库规模: top_k 过大会让下游 MMR + 父文档
+        #    扩展对接近全库做重活 (实测库大时整步空转数分钟)。按论文数适度放大并设硬上限。
+        pool = hybrid_search(bb.topic, top_k=min(max(len(valid_ids) * 4, 60), 150))
         best_score: dict[str, float] = {}
         for h in pool:
             if h.paper_id and h.paper_id > "":

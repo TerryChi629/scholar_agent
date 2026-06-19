@@ -120,6 +120,24 @@
   .stat .num{font-size:24px;font-weight:700;background:linear-gradient(120deg,#fff,var(--cyan));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
   .stat .lbl{font-size:12px;color:var(--muted)}
 
+  .agent-viz{margin-top:18px;border:1px solid var(--border);border-radius:13px;padding:16px;background:linear-gradient(150deg,rgba(34,211,238,.08),rgba(168,85,247,.06));backdrop-filter:blur(10px)}
+  .agent-viz h3{font-size:13px;margin:0 0 12px;color:#fff;font-weight:600;display:flex;justify-content:space-between;align-items:center}
+  .agent-graph{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px}
+  .agent-node{position:relative;border:1px solid var(--border);border-radius:11px;padding:10px 8px;min-height:64px;background:rgba(0,0,0,.22)}
+  .agent-node::after{content:'→';position:absolute;right:-12px;top:20px;color:var(--dim);font-size:14px}
+  .agent-node:last-child::after{content:''}
+  .agent-node .n{font-weight:700;font-size:12px;color:var(--text)}
+  .agent-node .s{font-size:11px;color:var(--muted);margin-top:4px}
+  .agent-node.done{border-color:rgba(52,211,153,.45);box-shadow:0 0 18px rgba(52,211,153,.08)}
+  .agent-node.running{border-color:rgba(34,211,238,.55);box-shadow:var(--glow-cyan)}
+  .agent-node.pending{opacity:.6}
+  .agent-events{max-height:220px;overflow:auto;border-top:1px solid var(--border-soft);padding-top:10px}
+  .agent-event{display:grid;grid-template-columns:76px 96px 74px 1fr;gap:8px;padding:7px 0;border-bottom:1px solid var(--border-soft);font-size:12px}
+  .agent-event:last-child{border-bottom:none}
+  .agent-event .time,.agent-event .ev{color:var(--dim)}
+  .agent-event .node{color:var(--cyan);font-weight:600}
+  .agent-event .note{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
   .hit{border:1px solid var(--border);border-radius:11px;padding:13px;margin-bottom:10px;background:var(--panel)}
   .hit .meta{font-size:12px;color:var(--muted);margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:8px}
   .hit .meta .title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -456,6 +474,7 @@ async function showDetail(id, silent){
         <div class="stat"><span class="num">${tok}</span><span class="lbl">总 tokens</span></div>
         <div class="stat"><span class="num">${arts.length}</span><span class="lbl">产物</span></div>
       </div>
+      ${renderAgentViz(t)}
       ${arts.length ? '<div class="row" style="margin-top:14px">' + arts.map(n =>
         `<button class="btn ghost" onclick="openArtifact('${encodeURIComponent(n)}')">${esc(label(n))}</button>`).join('') + '</div>' : ''}
     `;
@@ -464,6 +483,41 @@ async function showDetail(id, silent){
 }
 function label(n){ if(n.endsWith('_graph.html'))return '查看立场图谱';
   if(n.endsWith('.html'))return '查看综述'; if(n.endsWith('.md'))return '综述底稿(md)'; return n; }
+
+function renderAgentViz(t){
+  const nodes = ['plan','retrieve','read','synthesize','review','done'];
+  const plan = Object.fromEntries((t.plan||[]).map(p => [p.name, p]));
+  const statusMap = {
+    plan: (t.graph_events||[]).some(e => e.node==='plan') ? 'done' : (t.status==='planning'?'running':'pending'),
+    retrieve: plan.retrieve ? plan.retrieve.status : 'pending',
+    read: plan.read ? plan.read.status : 'pending',
+    synthesize: plan.synthesize ? plan.synthesize.status : 'pending',
+    review: plan.review ? plan.review.status : 'pending',
+    done: t.done ? 'done' : 'pending',
+  };
+  const names = {plan:'Plan',retrieve:'Retriever',read:'Reader',synthesize:'Synthesizer',review:'Critic',done:'Done'};
+  const graph = nodes.map(n => `<div class="agent-node ${statusMap[n]||'pending'}">
+      <div class="n">${names[n]}</div>
+      <div class="s">${esc(statusMap[n]||'pending')}</div>
+      ${plan[n]&&plan[n].note?`<div class="s">${esc(plan[n].note)}</div>`:''}
+    </div>`).join('');
+  const events = (t.graph_events||[]).slice(-30).reverse();
+  const evHtml = events.length ? events.map(e => `<div class="agent-event">
+      <span class="time">${fmtTime(e.ts)}</span><span class="node">${esc(e.node)}</span>
+      <span class="ev">${esc(e.event)}</span><span class="note" title="${esc(e.note||'')}">${esc(e.note||'')}</span>
+    </div>`).join('') : '<div class="empty" style="padding:14px">等待调度事件...</div>';
+  return `<div class="agent-viz">
+    <h3><span>StateGraph Agent 调度</span><span style="color:var(--muted);font-size:11px">Blackboard + 条件边</span></h3>
+    <div class="agent-graph">${graph}</div>
+    <div class="agent-events">${evHtml}</div>
+  </div>`;
+}
+
+function fmtTime(ts){
+  if(!ts) return '--:--:--';
+  const d = new Date(ts * 1000);
+  return d.toLocaleTimeString('zh-CN', {hour12:false});
+}
 
 $('#btn-map').onclick = async () => {
   const topic = $('#topic').value.trim();

@@ -99,6 +99,12 @@ def get_task(task_id: str):
         "nodes": len(bb.graph.nodes) if bb.graph else 0,
         "artifacts": bb.artifacts,
         "usage": bb.usage,
+        "plan": [
+            {"name": s.name, "status": s.status, "note": s.note}
+            for s in bb.plan
+        ],
+        "graph_events": bb.graph_events[-80:],
+        "critic_feedback": bb.critic_feedback[-10:],
     }
 
 
